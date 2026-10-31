@@ -131,6 +131,9 @@ ranked by how much one upgrade would help. Expand a row for the reasoning.</p>
 <p class="scope">Scope: each crate's latest version and its normal, non-optional dependencies. Dev, build and optional
 dependencies are ignored, so real duplication is higher. Nested crates count more than once (if <i>X</i> depends on <i>Y</i>,
 both count), so impact ranks upgrades rather than counting builds.</p>
+<p class="scope"><b>Grace period</b>: pairs whose new line of <i>D</i> was released less than
+<span id="grace">30</span> days ago are not ranked. Upgrade PRs that early are premature: lockstep projects often fix the
+duplicate in their next release, and new lines still get patches. This filters the list and doesn't change the score.</p>
 <p class="scope"><b>MSRV</b> is not part of the score; it shows how hard the upgrade is.
 <span class="badge warn">bump</span> means <i>D</i>'s latest version needs a newer Rust than <i>L</i> supports, so the PR
 also raises <i>L</i>'s minimum supported Rust version, which some maintainers won't accept.
@@ -165,6 +168,8 @@ const crate = n => `<a href="https://crates.io/crates/${encodeURIComponent(n)}">
 const safeUrl = u => /^https?:\/\//.test(u ?? "") ? u : null;
 let items = [], sortKey = "rank", asc = true, maxImpact = 1, page = 0;
 
+let asOf = new Date();
+const daysSince = d => Math.round((asOf - new Date(d)) / 864e5);
 const via = it => it.lag_msrv_via ? ` (inherited from ${esc(it.lag_msrv_via)}, same repository)` : "";
 function msrv(it) {
   if (it.msrv_bump === true) return `<span class="badge warn" title="${esc(it.dep)} ${esc(it.dep_latest)} needs Rust ${esc(it.dep_msrv)}; ${esc(it.lag)} supports ${esc(it.lag_msrv)}${via(it)}">bump</span>`;
@@ -189,7 +194,7 @@ function render(it) {
     <p class="story">If <b>${esc(it.lag)}</b> moves <code>${esc(it.dep)}</code> from <code>${esc(it.req)}</code> to ${esc(it.dep_latest)},
     <b>${it.affected.toLocaleString()}</b> crates that currently compile ${esc(it.dep)} twice are affected, and
     <b>${it.sole.toLocaleString()}</b> of them lose the duplicate entirely (${esc(it.lag)} is their only blocker).
-    ${esc(it.dep)}'s latest line (now ${esc(it.dep_latest)}) has been out since <span class="nw">${esc(it.dep_line_since)}</span>.<br>
+    ${esc(it.dep)}'s latest line (now ${esc(it.dep_latest)}) has been out since <span class="nw">${esc(it.dep_line_since)}</span> (${daysSince(it.dep_line_since)} days).<br>
     ${repo ? `<a href="${esc(repo)}">Repository</a> · ` : ""}${crate(it.lag)} · owners: ${it.owners?.map(esc).join(", ") || "?"} ·
     last release <span class="nw">${esc(it.lag_last_release)}</span> · MSRV ${esc(it.lag_msrv ?? "?")}${it.lag_msrv_via ? ` <span class="muted">(via ${crate(it.lag_msrv_via)})</span>` : ""} → ${esc(it.dep)} needs ${esc(it.dep_msrv ?? "?")}</p>
     <div><h3>Biggest affected crates</h3><ol>${aff}</ol></div>
@@ -227,7 +232,7 @@ function summary(d) {
     box("Dependency edges", fmt.format(s.edges), "normal, non-optional dependencies"),
     box("Compiling a duplicate", fmt.format(s.crates_with_dup), `${(100 * s.crates_with_dup / s.crates).toFixed(0)}% of crates build some dependency twice`),
     box("Most duplicated", esc(s.most_duplicated.name), `${fmt.format(s.most_duplicated.crates)} crates affected · ${s.most_duplicated.lines} lines in use`),
-    box("Upgrade opportunities", fmt.format(s.opportunities), `crate → outdated dependency pairs; top ${items.length} listed`),
+    box("Upgrade opportunities", fmt.format(s.opportunities), `crate → outdated dependency pairs; top ${items.length} listed${s.in_grace ? `, ${fmt.format(s.in_grace)} in the ${s.grace_days}-day grace period` : ""}`),
   ].join("");
 }
 
@@ -243,6 +248,8 @@ document.querySelectorAll(".head button").forEach(b => b.addEventListener("click
 
 fetch("report.json", { cache: "no-cache" }).then(r => r.json()).then(d => {
   items = d.items;
+  asOf = new Date(d.stats?.data_as_of ?? d.generated_at);
+  if (d.stats?.grace_days) document.getElementById("grace").textContent = d.stats.grace_days;
   maxImpact = Math.max(1, ...items.map(it => it.impact));
   draw();
   if (d.stats) summary(d);
