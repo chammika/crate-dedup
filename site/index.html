@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>crate-dedup: upgrades that remove duplicate crates</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #faf6f1; --surface: #fffdfa; --text: #2a2320; --muted: #6e625a; --line: #e6dcd2;
+    --rust: #a8380f; --rust-soft: #f3e1d6; --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #171311; --surface: #1f1916; --text: #ece4dc; --muted: #a89a8f; --line: #3a302b;
+            --rust: #f0743e; --rust-soft: #3a2219; }
+  }
+  * { box-sizing: border-box; }
+  body { font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--text);
+         max-width: 1120px; margin: 0 auto; padding: 0 1.25rem 4rem; }
+  header { border-top: 4px solid var(--rust); padding: 2.5rem 0 1rem; }
+  h1 { font: 600 2.4rem/1.1 var(--serif); margin: 0 0 .5rem; letter-spacing: -.01em; }
+  h1 span { color: var(--rust); }
+  .lede { font: 1.1rem/1.5 var(--serif); color: var(--muted); max-width: 46rem; margin: 0; }
+  .muted { color: var(--muted); }
+  a { color: var(--rust); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  code { font: .88em var(--mono); background: var(--rust-soft); padding: .05em .3em; border-radius: .25rem; }
+  .about { margin: 1rem 0 0; color: var(--muted); }
+  .about summary { cursor: pointer; color: var(--rust); width: fit-content; }
+  .about p { max-width: 50rem; }
+  input[type=search] { width: 100%; padding: .7rem .9rem; font: inherit; margin: 1.5rem 0 1rem; color: var(--text);
+                       background: var(--surface); border: 1px solid var(--line); border-radius: .5rem; }
+  input[type=search]:focus { outline: 2px solid var(--rust); outline-offset: 1px; }
+  .table { background: var(--surface); border: 1px solid var(--line); border-radius: .6rem; overflow: hidden; }
+  .row { display: grid; grid-template-columns: 2.5rem 1.6fr 1.3fr 7rem 5rem 4.5rem 4.5rem; gap: .75rem; align-items: baseline; }
+  .head { font-size: .78rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted);
+          padding: .7rem 1rem .6rem 2.2rem; border-bottom: 1px solid var(--line); }
+  .head button { all: unset; cursor: pointer; }
+  .head button:hover, .head button[aria-sort] { color: var(--rust); }
+  .head button:focus-visible { outline: 2px solid var(--rust); }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  details.item { border-bottom: 1px solid var(--line); }
+  details.item:last-child { border-bottom: 0; }
+  details.item[open] { background: color-mix(in srgb, var(--rust-soft) 40%, transparent); }
+  details.item > summary { padding: .6rem 1rem; cursor: pointer; }
+  details.item > summary::marker { color: var(--rust); }
+  details.item > summary:hover { background: color-mix(in srgb, var(--rust-soft) 55%, transparent); }
+  summary .row { display: inline-grid; width: calc(100% - 1.2rem); margin-left: .2rem; }
+  .rank { color: var(--muted); }
+  .nw { white-space: nowrap; }
+  .name { font-weight: 600; }
+  .impact { position: relative; }
+  .impact i { position: absolute; left: 0; bottom: -.3rem; height: 3px; width: var(--w); background: var(--rust);
+              border-radius: 2px; opacity: .55; }
+  .badge { font-size: .72rem; padding: .05rem .4rem; border-radius: 1rem; border: 1px solid var(--line); color: var(--muted); }
+  .warn { color: var(--rust); border-color: var(--rust); }
+  .detail { padding: .2rem 2.4rem 1.4rem; display: grid; grid-template-columns: 1fr 1fr; gap: 0 2.5rem; }
+  .detail p { grid-column: 1 / -1; margin: .3rem 0 .8rem; max-width: 60rem; }
+  .detail .story { font: 1.05rem/1.55 var(--serif); }
+  .detail h3 { font: 600 .78rem/1 system-ui, sans-serif; text-transform: uppercase; letter-spacing: .06em;
+               color: var(--muted); margin: .6rem 0 .5rem; }
+  .detail ol { margin: 0; padding-left: 1.4rem; }
+  .detail li { padding: .1rem 0; }
+  .detail li::marker { color: var(--muted); font-size: .85em; }
+  footer { margin-top: 2rem; color: var(--muted); font-size: .85rem; }
+  @media (max-width: 720px) {
+    .row { grid-template-columns: 2rem 1fr 1fr 4.5rem; }
+    .row > :nth-child(n+5) { display: none; }
+    .detail { grid-template-columns: 1fr; padding: .2rem 1rem 1rem; }
+    h1 { font-size: 1.9rem; }
+  }
+</style>
+</head>
+<body>
+<header>
+<h1>crate<span>-</span>dedup</h1>
+<p class="lede">Crates whose outdated dependency makes the ecosystem compile two copies of the same crate,
+ranked by how much one upgrade would help. Expand a row for the reasoning.</p>
+<details class="about"><summary>How the score works</summary>
+<p><b>Affected</b>: crates whose dependency tree contains the crate to upgrade <i>and</i> the dependency's latest line,
+so they compile the dependency twice. <b>Sole</b>: affected crates where this crate is the only one holding the old line,
+so upgrading it removes the duplicate entirely.
+<b>Impact</b> = Σ over affected crates of (their downloads in the last 90 days ÷ number of crates holding the same old line in their tree).
+Only normal, non-optional dependencies of each crate's latest version are counted.</p></details>
+</header>
+
+<input type="search" id="q" placeholder="Filter by crate, dependency, or owner (e.g. syn, windows-sys)" aria-label="Filter">
+
+<div class="table">
+<div class="row head" role="row">
+  <button data-k="rank">#</button><button data-k="lag">Crate to upgrade</button><button data-k="dep">Outdated dependency</button>
+  <button data-k="impact" class="num">Impact</button><button data-k="affected" class="num">Affected</button>
+  <button data-k="sole" class="num">Sole</button><span>MSRV</span>
+</div>
+<div id="list"><p class="muted" style="padding:1rem">Loading…</p></div>
+</div>
+<footer id="gen"></footer>
+
+<script>
+const fmt = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 });
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const crate = n => `<a href="https://crates.io/crates/${encodeURIComponent(n)}">${esc(n)}</a>`;
+const safeUrl = u => /^https?:\/\//.test(u ?? "") ? u : null;
+let items = [], sortKey = "rank", asc = true, maxImpact = 1;
+
+function msrv(it) {
+  if (it.msrv_bump === true) return `<span class="badge warn" title="${esc(it.dep)} ${esc(it.dep_latest)} needs Rust ${esc(it.dep_msrv)}; ${esc(it.lag)} declares ${esc(it.lag_msrv)}">bump</span>`;
+  if (it.msrv_bump === false) return `<span class="badge" title="no MSRV raise needed">ok</span>`;
+  return `<span class="muted" title="MSRV not declared">?</span>`;
+}
+
+function render(it) {
+  const repo = safeUrl(it.repository);
+  const aff = it.top_affected.map(a => `<li>${crate(a.name)} <span class="muted">${fmt.format(a.d90)}/90d</span>${a.sole ? ' <span class="badge" title="this upgrade alone removes the duplicate here">sole</span>' : ""}</li>`).join("");
+  const co = it.co_blockers.map(c => `<li>${crate(c.name)} <span class="muted">in ${fmt.format(c.shared)} trees</span></li>`).join("");
+  return `<details class="item"><summary><span class="row">
+    <span class="num rank">${it.rank}</span>
+    <span><span class="name">${esc(it.lag)}</span> <span class="muted">${esc(it.lag_version)}</span></span>
+    <span>${esc(it.dep)} <span class="muted">${esc(it.old_line)} → ${esc(it.dep_latest)}</span></span>
+    <span class="num impact"><i style="--w:${(100 * it.impact / maxImpact).toFixed(1)}%"></i>${fmt.format(it.impact)}</span>
+    <span class="num">${fmt.format(it.affected)}</span>
+    <span class="num">${fmt.format(it.sole)}</span>
+    <span>${msrv(it)}</span></span></summary>
+  <div class="detail">
+    <p class="story">If <b>${esc(it.lag)}</b> moves <code>${esc(it.dep)}</code> from <code>${esc(it.req)}</code> to ${esc(it.dep_latest)},
+    <b>${it.affected.toLocaleString()}</b> crates that currently compile ${esc(it.dep)} twice are affected, and
+    <b>${it.sole.toLocaleString()}</b> of them lose the duplicate entirely (${esc(it.lag)} is their only blocker).
+    ${esc(it.dep)}'s latest line (now ${esc(it.dep_latest)}) has been out since <span class="nw">${esc(it.dep_line_since)}</span>.<br>
+    ${repo ? `<a href="${esc(repo)}">Repository</a> · ` : ""}${crate(it.lag)} · owners: ${it.owners?.map(esc).join(", ") || "?"} ·
+    last release <span class="nw">${esc(it.lag_last_release)}</span> · MSRV ${esc(it.lag_msrv ?? "?")} → ${esc(it.dep)} needs ${esc(it.dep_msrv ?? "?")}</p>
+    <div><h3>Biggest affected crates</h3><ol>${aff}</ol></div>
+    <div><h3>Also holding ${esc(it.dep)} ${esc(it.old_line)} in these trees</h3>${co ? `<ol>${co}</ol>` : '<p class="muted">None: sole blocker everywhere.</p>'}</div>
+  </div></details>`;
+}
+
+function draw() {
+  const q = document.getElementById("q").value.trim().toLowerCase();
+  const rows = items
+    .filter(it => !q || [it.lag, it.dep, ...(it.owners ?? [])].some(s => s?.toLowerCase().includes(q)))
+    .sort((a, b) => (a[sortKey] < b[sortKey] ? -1 : a[sortKey] > b[sortKey] ? 1 : 0) * (asc ? 1 : -1));
+  document.getElementById("list").innerHTML = rows.map(render).join("") || '<p class="muted">No matches.</p>';
+}
+
+document.getElementById("q").addEventListener("input", draw);
+document.querySelectorAll(".head button").forEach(b => b.addEventListener("click", () => {
+  const k = b.dataset.k;
+  asc = k === sortKey ? !asc : ["rank", "lag", "dep"].includes(k);
+  sortKey = k;
+  document.querySelectorAll(".head button").forEach(x => x.removeAttribute("aria-sort"));
+  b.setAttribute("aria-sort", asc ? "ascending" : "descending");
+  draw();
+}));
+
+fetch("report.json").then(r => r.json()).then(d => {
+  items = d.items;
+  maxImpact = Math.max(1, ...items.map(it => it.impact));
+  document.getElementById("gen").textContent = `Updated ${d.generated_at.slice(0, 10)} from the crates.io database dump · ${items.length} items`;
+  draw();
+}).catch(e => { document.getElementById("list").innerHTML = `<p class="warn">Failed to load report.json: ${esc(e)}</p>`; });
+</script>
+</body>
+</html>

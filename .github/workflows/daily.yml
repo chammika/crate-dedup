@@ -1,0 +1,50 @@
+name: daily
+
+on:
+  schedule:
+    - cron: "30 3 * * *"  # crates.io publishes the dump around 02:00 UTC
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
+
+      # Stream-extract only the CSVs analyze.py reads; the 2 GB tarball never touches disk.
+      - name: Download crates.io dump
+        run: |
+          mkdir dump
+          curl -sSfL https://static.crates.io/db-dump.tar.gz | tar -xzf - -C dump --strip-components=2 --wildcards \
+            '*/data/crates.csv' '*/data/crate_downloads.csv' '*/data/versions.csv' \
+            '*/data/default_versions.csv' '*/data/dependencies.csv' '*/data/version_downloads.csv' \
+            '*/data/crate_owners.csv' '*/data/users.csv' '*/data/teams.csv'
+          ls -lh dump
+
+      - run: uv run analyze.py dump site/report.json
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v5
