@@ -28,6 +28,13 @@
   .about { margin: 1rem 0 0; color: var(--muted); }
   .about summary { cursor: pointer; color: var(--rust); width: fit-content; }
   .about p { max-width: 50rem; }
+  .eq { margin: 1.2rem 0; padding: 1.3rem 1rem; background: var(--surface); border: 1px solid var(--line);
+        border-left: 4px solid var(--rust); border-radius: .6rem; color: var(--text); overflow-x: auto; }
+  .eq math { font-size: 1.35rem; font-family: var(--serif); }
+  .vars { display: grid; grid-template-columns: max-content 1fr; gap: .55rem 1.2rem; max-width: 50rem; margin: 0; }
+  .vars dt { font-family: var(--serif); font-size: 1.05rem; color: var(--rust); white-space: nowrap; }
+  .vars dd { margin: 0; color: var(--text); }
+  .about .scope { font-size: .88rem; margin-top: 1rem; }
   input[type=search] { width: 100%; padding: .7rem .9rem; font: inherit; margin: 1.5rem 0 1rem; color: var(--text);
                        background: var(--surface); border: 1px solid var(--line); border-radius: .5rem; }
   input[type=search]:focus { outline: 2px solid var(--rust); outline-offset: 1px; }
@@ -95,11 +102,34 @@
 ranked by how much one upgrade would help. Expand a row for the reasoning.</p>
 <p class="updated" id="updated"></p>
 <details class="about"><summary>How the score works</summary>
-<p><b>Affected</b>: crates whose dependency tree contains the crate to upgrade <i>and</i> the dependency's latest line,
-so they compile the dependency twice. <b>Sole</b>: affected crates where this crate is the only one holding the old line,
-so upgrading it removes the duplicate entirely.
-<b>Impact</b> = Σ over affected crates of (their downloads in the last 90 days ÷ number of crates holding the same old line in their tree).
-Only normal, non-optional dependencies of each crate's latest version are counted.</p></details>
+<div class="eq" role="math" aria-label="impact of L to D equals the sum over R in A of d90 of R divided by k of R">
+<math display="block">
+  <mrow>
+    <mi>impact</mi><mo stretchy="false">(</mo><mi>L</mi><mo>→</mo><mi>D</mi><mo stretchy="false">)</mo>
+    <mo>=</mo>
+    <munder><mo largeop="true" movablelimits="false" style="font-size:1.8em">∑</mo><mrow><mi>R</mi><mo>∈</mo><mi>A</mi><mo stretchy="false">(</mo><mi>L</mi><mo>,</mo><mi>D</mi><mo stretchy="false">)</mo></mrow></munder>
+    <mfrac><mrow><msub><mi>d</mi><mn>90</mn></msub><mo stretchy="false">(</mo><mi>R</mi><mo stretchy="false">)</mo></mrow>
+           <mrow><mi>k</mi><mo stretchy="false">(</mo><mi>R</mi><mo stretchy="false">)</mo></mrow></mfrac>
+  </mrow>
+</math>
+</div>
+<dl class="vars">
+  <dt><i>L</i></dt><dd>The crate to upgrade, using its latest version.</dd>
+  <dt><i>D</i></dt><dd>The outdated dependency. <i>L</i> requires an older semver line of <i>D</i> than its latest
+    (<code>^2</code> while syn 3 is out). A range that admits the latest version (<code>&gt;=0.52, &lt;0.62</code> with 0.61.2 out) is not outdated.</dd>
+  <dt><i>A</i>(<i>L</i>, <i>D</i>)</dt><dd>The affected crates: every crate <i>R</i> whose dependency tree contains <i>L</i>
+    and also requires <i>D</i>'s latest line, so <i>R</i> compiles <i>D</i> twice. <i>R</i> can be <i>L</i> itself.
+    The <b>Affected</b> column is |<i>A</i>|.</dd>
+  <dt><i>d</i><sub>90</sub>(<i>R</i>)</dt><dd>Downloads of <i>R</i> (all versions) in the last 90 days, so current usage
+    counts and abandoned crates count for little.</dd>
+  <dt><i>k</i>(<i>R</i>)</dt><dd>The number of crates in <i>R</i>'s tree that hold <i>D</i> on the same old line as <i>L</i>.
+    All of them must upgrade before the duplicate disappears, so the credit is split <i>k</i> ways. The <b>Sole</b> column counts
+    affected crates with <span class="nw"><i>k</i>(<i>R</i>) = 1</span>, where upgrading <i>L</i> alone removes the duplicate.</dd>
+</dl>
+<p class="scope">Scope: each crate's latest version and its normal, non-optional dependencies. Dev, build and optional
+dependencies are ignored, so real duplication is higher. Nested crates count more than once (if <i>X</i> depends on <i>Y</i>,
+both count), so impact ranks upgrades rather than counting builds.</p>
+</details>
 </header>
 
 <input type="search" id="q" placeholder="Filter by crate, dependency, or owner (e.g. syn, windows-sys)" aria-label="Filter">
