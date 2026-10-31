@@ -39,20 +39,22 @@
                        background: var(--surface); border: 1px solid var(--line); border-radius: .5rem; }
   input[type=search]:focus { outline: 2px solid var(--rust); outline-offset: 1px; }
   .table { background: var(--surface); border: 1px solid var(--line); border-radius: .6rem; overflow: hidden; }
-  .row { display: grid; grid-template-columns: 2.5rem 1.6fr 1.3fr 7rem 5rem 4.5rem 4.5rem; gap: .75rem; align-items: baseline; }
+  .row { display: grid; grid-template-columns: .8rem 2.5rem 1.6fr 1.3fr 7rem 5rem 4.5rem 4.5rem; gap: 1.1rem; align-items: baseline; }
   .head { font-size: .78rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted);
-          padding: .7rem 1rem .6rem 2.2rem; border-bottom: 1px solid var(--line); }
+          padding: .7rem 1rem .6rem; border-bottom: 1px solid var(--line); }
   .head button { all: unset; cursor: pointer; }
+  .head .num { text-align: right; }  /* all: unset above drops it */
   .head button:hover, .head button[aria-sort] { color: var(--rust); }
   .head button:focus-visible { outline: 2px solid var(--rust); }
   .num { text-align: right; font-variant-numeric: tabular-nums; }
   details.item { border-bottom: 1px solid var(--line); }
   details.item:last-child { border-bottom: 0; }
   details.item[open] { background: color-mix(in srgb, var(--rust-soft) 40%, transparent); }
-  details.item > summary { padding: .6rem 1rem; cursor: pointer; }
-  details.item > summary::marker { color: var(--rust); }
+  details.item > summary { padding: .6rem 1rem; cursor: pointer; list-style: none; }
+  details.item > summary::-webkit-details-marker { display: none; }
+  .chev { display: inline-block; color: var(--rust); font-size: .7rem; transition: transform .15s; }
+  details.item[open] .chev { transform: rotate(90deg); }
   details.item > summary:hover { background: color-mix(in srgb, var(--rust-soft) 55%, transparent); }
-  summary .row { display: inline-grid; width: calc(100% - 1.2rem); margin-left: .2rem; }
   .rank { color: var(--muted); }
   .nw { white-space: nowrap; }
   .name { font-weight: 600; }
@@ -88,8 +90,8 @@
   .stat small { display: block; color: var(--muted); margin-top: .3rem; }
   footer { margin-top: 2rem; color: var(--muted); font-size: .85rem; }
   @media (max-width: 720px) {
-    .row { grid-template-columns: 2rem 1fr 1fr 4.5rem; }
-    .row > :nth-child(n+5) { display: none; }
+    .row { grid-template-columns: .8rem 2rem 1fr 1fr 4.5rem; }
+    .row > :nth-child(n+6) { display: none; }
     .detail { grid-template-columns: 1fr; padding: .2rem 1rem 1rem; }
     h1 { font-size: 1.9rem; }
   }
@@ -136,7 +138,7 @@ both count), so impact ranks upgrades rather than counting builds.</p>
 
 <div class="table">
 <div class="row head" role="row">
-  <button data-k="rank">#</button><button data-k="lag">Crate to upgrade</button><button data-k="dep">Outdated dependency</button>
+  <span></span><button data-k="rank" class="num">#</button><button data-k="lag">Crate to upgrade</button><button data-k="dep">Outdated dependency</button>
   <button data-k="impact" class="num">Impact</button><button data-k="affected" class="num">Affected</button>
   <button data-k="sole" class="num">Sole</button><span>MSRV</span>
 </div>
@@ -168,6 +170,7 @@ function render(it) {
   const aff = it.top_affected.map(a => `<li>${crate(a.name)} <span class="muted">${fmt.format(a.d90)}/90d</span>${a.sole ? ' <span class="badge" title="this upgrade alone removes the duplicate here">sole</span>' : ""}</li>`).join("");
   const co = it.co_blockers.map(c => `<li>${crate(c.name)} <span class="muted">in ${fmt.format(c.shared)} trees</span></li>`).join("");
   return `<details class="item"><summary><span class="row">
+    <span class="chev" aria-hidden="true">▶</span>
     <span class="num rank">${it.rank}</span>
     <span><span class="name">${esc(it.lag)}</span> <span class="muted">${esc(it.lag_version)}</span></span>
     <span>${esc(it.dep)} <span class="muted">${esc(it.old_line)} → ${esc(it.dep_latest)}</span></span>
