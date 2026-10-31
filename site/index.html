@@ -201,11 +201,11 @@ document.querySelectorAll(".head button").forEach(b => b.addEventListener("click
   draw();
 }));
 
-fetch("report.json").then(r => r.json()).then(d => {
+fetch("report.json", { cache: "no-cache" }).then(r => r.json()).then(d => {
   items = d.items;
   maxImpact = Math.max(1, ...items.map(it => it.impact));
-  summary(d);
   draw();
+  if (d.stats) summary(d);
 }).catch(e => { document.getElementById("list").innerHTML = `<p class="warn">Failed to load report.json: ${esc(e)}</p>`; });
 </script>
 </body>
