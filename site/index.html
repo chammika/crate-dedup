@@ -131,6 +131,12 @@ ranked by how much one upgrade would help. Expand a row for the reasoning.</p>
 <p class="scope">Scope: each crate's latest version and its normal, non-optional dependencies. Dev, build and optional
 dependencies are ignored, so real duplication is higher. Nested crates count more than once (if <i>X</i> depends on <i>Y</i>,
 both count), so impact ranks upgrades rather than counting builds.</p>
+<p class="scope"><b>MSRV</b> is not part of the score; it shows how hard the upgrade is.
+<span class="badge warn">bump</span> means <i>D</i>'s latest version needs a newer Rust than <i>L</i> supports, so the PR
+also raises <i>L</i>'s minimum supported Rust version, which some maintainers won't accept.
+<span class="badge">ok</span> means no raise is needed. <b>?</b> means no MSRV is declared. When <i>L</i> declares none,
+it inherits the MSRV of its parent (the most downloaded crate from the same repository that depends on <i>L</i>, e.g.
+zerocopy-derive from zerocopy), shown as "via" in the row details.</p>
 </details>
 </header>
 
