@@ -17,7 +17,7 @@ out = sys.argv[2] if len(sys.argv) > 2 else "report.json"
 LIMIT, DETAIL = 500, 10  # ranked items, detail rows per item
 GRACE_DAYS = 30  # don't rank a dependency line released less than this many days ago; PRs that early are premature
 db = duckdb.connect()
-db.execute("SET preserve_insertion_order = false; SET memory_limit = '10GB'")
+db.execute("SET preserve_insertion_order = false; SET memory_limit = '10GB'; SET TimeZone = 'UTC'")  # dates must not depend on the machine's zone
 t0 = time.time()
 
 
@@ -152,9 +152,10 @@ CREATE TABLE share AS SELECT root, dep_id, old, count(*) k FROM aff GROUP BY ALL
 
 # SCORE (see README): impact(L -> D) = sum over affected roots R of d90(R) / k(R).
 # A sole blocker (k = 1) earns R's full downloads; blame shared by k crates is split k ways.
+# Summed as integer milli-downloads: float addition order varies between parallel runs.
 step("""
 CREATE TABLE score AS
-SELECT a.lag_id, a.dep_id, a.old, round(sum(r.d90 / s.k))::BIGINT impact,
+SELECT a.lag_id, a.dep_id, a.old, (sum(r.d90 * 1000 // s.k) // 1000)::BIGINT impact,
        count(*) affected, count(*) FILTER (s.k = 1) sole
 FROM aff a JOIN share s USING (root, dep_id, old) JOIN crates r ON r.id = a.root
 GROUP BY ALL
@@ -166,20 +167,20 @@ step(f"""
 CREATE TABLE top AS
 SELECT s.* FROM score s JOIN latest dv ON dv.crate_id = s.dep_id
 WHERE dv.cur_since::DATE <= (SELECT max(created_at)::DATE FROM versions) - {GRACE_DAYS}
-ORDER BY impact DESC, affected DESC LIMIT {LIMIT}
+ORDER BY impact DESC, affected DESC, lag_id, dep_id LIMIT {LIMIT}
 """)
 
 # Details for the expandable row: biggest affected crates, and the other crates holding the same old line.
 step(f"""
 CREATE TABLE top_affected AS
 SELECT a.lag_id, a.dep_id,
-       list({{'name': r.name, 'd90': r.d90, 'sole': s.k = 1}} ORDER BY r.d90 DESC)[1:{DETAIL}] top_affected
+       list({{'name': r.name, 'd90': r.d90, 'sole': s.k = 1}} ORDER BY r.d90 DESC, r.name)[1:{DETAIL}] top_affected
 FROM top t JOIN aff a USING (lag_id, dep_id, old) JOIN share s USING (root, dep_id, old) JOIN crates r ON r.id = a.root
 GROUP BY ALL
 """)
 step(f"""
 CREATE TABLE co_blockers AS
-SELECT lag_id, dep_id, list({{'name': c.name, 'shared': n}} ORDER BY n DESC)[1:{DETAIL}] co_blockers
+SELECT lag_id, dep_id, list({{'name': c.name, 'shared': n}} ORDER BY n DESC, c.name)[1:{DETAIL}] co_blockers
 FROM (SELECT a.lag_id, a.dep_id, b.lag_id other, count(*) n
       FROM top t JOIN aff a USING (lag_id, dep_id, old)
       JOIN aff b ON b.root = a.root AND b.dep_id = a.dep_id AND b.old = a.old AND b.lag_id <> a.lag_id
@@ -206,7 +207,7 @@ SELECT t.lag_id, coalesce(lv.rust_version, p.rv) msrv, CASE WHEN lv.rust_version
 FROM (SELECT DISTINCT lag_id FROM top) t
 JOIN latest lv ON lv.crate_id = t.lag_id
 LEFT JOIN (
-  SELECT d.dst lag_id, arg_max(pl.rust_version, pc.d90) rv, arg_max(pc.name, pc.d90) via
+  SELECT d.dst lag_id, arg_max(pl.rust_version, (pc.d90, pc.name)) rv, arg_max(pc.name, (pc.d90, pc.name)) via
   FROM deps d
   JOIN crates pc ON pc.id = d.src JOIN crates lc ON lc.id = d.dst JOIN latest pl ON pl.crate_id = d.src
   WHERE d.dst IN (SELECT lag_id FROM top) AND d.src <> d.dst
@@ -232,7 +233,7 @@ LEFT JOIN owners ow ON ow.crate_id = t.lag_id
 LEFT JOIN msrv m ON m.lag_id = t.lag_id
 LEFT JOIN top_affected ta USING (lag_id, dep_id)
 LEFT JOIN co_blockers cb USING (lag_id, dep_id)
-ORDER BY t.impact DESC, t.affected DESC
+ORDER BY t.impact DESC, t.affected DESC, t.lag_id, t.dep_id
 """).fetchall()
 cols = [d[0] for d in db.description]
 items = [dict(zip(cols, r), rank=i + 1) for i, r in enumerate(rows)]
@@ -249,7 +250,7 @@ SELECT (SELECT count(*) FROM latest), (SELECT count(*) FROM edges), (SELECT coun
 stats["grace_days"] = GRACE_DAYS
 stats["most_duplicated"] = dict(zip(["name", "crates", "lines"], db.execute("""
 SELECT c.name, count(DISTINCT a.root) n, (SELECT count(DISTINCT ln) FROM edges e WHERE e.dst = a.dep_id)
-FROM aff a JOIN crates c ON c.id = a.dep_id GROUP BY c.name, a.dep_id ORDER BY n DESC LIMIT 1
+FROM aff a JOIN crates c ON c.id = a.dep_id GROUP BY c.name, a.dep_id ORDER BY n DESC, c.name LIMIT 1
 """).fetchone()))
 
 with open(out, "w") as f:
