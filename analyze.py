@@ -15,6 +15,7 @@ import duckdb
 data = sys.argv[1]
 out = sys.argv[2] if len(sys.argv) > 2 else "report.json"
 LIMIT, DETAIL = 500, 10  # ranked items, detail rows per item
+GRACE_DAYS = 30  # don't rank a dependency line released less than this many days ago; PRs that early are premature
 db = duckdb.connect()
 db.execute("SET preserve_insertion_order = false; SET memory_limit = '10GB'")
 t0 = time.time()
@@ -159,8 +160,13 @@ FROM aff a JOIN share s USING (root, dep_id, old) JOIN crates r ON r.id = a.root
 GROUP BY ALL
 """)
 
+# Grace period, measured against the dump date: young lines often settle by themselves (lockstep releases)
+# or still get patches. This filters the ranking and doesn't change the score.
 step(f"""
-CREATE TABLE top AS SELECT * FROM score ORDER BY impact DESC, affected DESC LIMIT {LIMIT}
+CREATE TABLE top AS
+SELECT s.* FROM score s JOIN latest dv ON dv.crate_id = s.dep_id
+WHERE dv.cur_since::DATE <= (SELECT max(created_at)::DATE FROM versions) - {GRACE_DAYS}
+ORDER BY impact DESC, affected DESC LIMIT {LIMIT}
 """)
 
 # Details for the expandable row: biggest affected crates, and the other crates holding the same old line.
@@ -233,11 +239,14 @@ items = [dict(zip(cols, r), rank=i + 1) for i, r in enumerate(rows)]
 
 # Ecosystem-wide numbers for the summary boxes.
 stats = dict(zip(
-    ["crates", "edges", "crates_with_dup", "opportunities", "data_as_of"],
+    ["crates", "edges", "crates_with_dup", "opportunities", "data_as_of", "in_grace"],
     db.execute("""
 SELECT (SELECT count(*) FROM latest), (SELECT count(*) FROM edges), (SELECT count(DISTINCT root) FROM aff),
-       (SELECT count(*) FROM score), (SELECT max(created_at)::DATE FROM versions)
-""").fetchone()))
+       (SELECT count(*) FROM score), (SELECT max(created_at)::DATE FROM versions),
+       (SELECT count(*) FROM score s JOIN latest dv ON dv.crate_id = s.dep_id
+        WHERE dv.cur_since::DATE > (SELECT max(created_at)::DATE FROM versions) - {GRACE_DAYS})
+""".replace("{GRACE_DAYS}", str(GRACE_DAYS))).fetchone()))
+stats["grace_days"] = GRACE_DAYS
 stats["most_duplicated"] = dict(zip(["name", "crates", "lines"], db.execute("""
 SELECT c.name, count(DISTINCT a.root) n, (SELECT count(DISTINCT ln) FROM edges e WHERE e.dst = a.dep_id)
 FROM aff a JOIN crates c ON c.id = a.dep_id GROUP BY c.name, a.dep_id ORDER BY n DESC LIMIT 1

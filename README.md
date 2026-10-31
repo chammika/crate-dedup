@@ -40,6 +40,11 @@ impact(L → D) = Σ over affected crates R of  d90(R) / k(R)
 In plain terms: impact is the download traffic that would stop compiling an extra copy of `D` if
 `L` upgraded, with credit shared among co-blockers.
 
+**Grace period:** pairs whose new line of `D` was released less than `GRACE_DAYS` (30) days before
+the dump date are left out of the ranking. Lockstep projects often clear such duplicates in their next
+release, and new lines still get patches, so a PR that early is premature. This filters the list and
+doesn't change the score. The excluded count is `stats.in_grace`.
+
 Known limits:
 - Downloads are double counted through nesting. If `A` depends on `B`, both count. That's fine for
   ranking, but impact is not a count of real builds.
