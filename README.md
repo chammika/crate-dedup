@@ -46,6 +46,11 @@ Known limits:
 - Optional, build and dev dependencies are ignored, so true duplication is higher.
 - Only each crate's latest version is analyzed. Users pinned to older versions aren't modeled.
 
+**MSRV inference:** derive and helper crates often declare no `rust-version`, but their parent's promise
+binds them. zerocopy says 1.56, so zerocopy-derive can't need more. The parent is a crate with the same
+(normalized) repository URL that depends on `lag` in any way. With several parents, the most downloaded
+wins, because forks copy the upstream repository URL but often keep a stale MSRV.
+
 ## report.json
 
 `{ "generated_at": ..., "items": [...] }`, top 500 by impact. Each item:
@@ -57,6 +62,6 @@ Known limits:
 | `sole` | affected crates where `lag` is the only blocker: upgrading fully removes the duplicate |
 | `lag`, `lag_version`, `lag_d90`, `repository`, `owners`, `lag_last_release` | the crate to upgrade, and who maintains it |
 | `dep`, `req`, `old_line`, `dep_latest`, `dep_line_since` | the outdated dependency, and when its latest line was first released |
-| `lag_msrv`, `dep_msrv`, `msrv_bump` | `rust_version` of each. `msrv_bump: true` means upgrading raises `lag`'s MSRV. `null` means unknown |
+| `lag_msrv`, `lag_msrv_via`, `dep_msrv`, `msrv_bump` | `rust_version` of each. `msrv_bump: true` means upgrading raises `lag`'s MSRV. `null` means unknown. If `lag` declares none, `lag_msrv` is inherited from its parent, and `lag_msrv_via` names it (see MSRV inference above) |
 | `top_affected` | the 10 affected crates with the most downloads: `{name, d90, sole}` |
 | `co_blockers` | the 10 other crates holding the same old line in the same trees: `{name, shared}` |

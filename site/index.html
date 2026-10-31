@@ -159,8 +159,9 @@ const crate = n => `<a href="https://crates.io/crates/${encodeURIComponent(n)}">
 const safeUrl = u => /^https?:\/\//.test(u ?? "") ? u : null;
 let items = [], sortKey = "rank", asc = true, maxImpact = 1, page = 0;
 
+const via = it => it.lag_msrv_via ? ` (inherited from ${esc(it.lag_msrv_via)}, same repository)` : "";
 function msrv(it) {
-  if (it.msrv_bump === true) return `<span class="badge warn" title="${esc(it.dep)} ${esc(it.dep_latest)} needs Rust ${esc(it.dep_msrv)}; ${esc(it.lag)} declares ${esc(it.lag_msrv)}">bump</span>`;
+  if (it.msrv_bump === true) return `<span class="badge warn" title="${esc(it.dep)} ${esc(it.dep_latest)} needs Rust ${esc(it.dep_msrv)}; ${esc(it.lag)} supports ${esc(it.lag_msrv)}${via(it)}">bump</span>`;
   if (it.msrv_bump === false) return `<span class="badge" title="no MSRV raise needed">ok</span>`;
   return `<span class="muted" title="MSRV not declared">?</span>`;
 }
@@ -184,7 +185,7 @@ function render(it) {
     <b>${it.sole.toLocaleString()}</b> of them lose the duplicate entirely (${esc(it.lag)} is their only blocker).
     ${esc(it.dep)}'s latest line (now ${esc(it.dep_latest)}) has been out since <span class="nw">${esc(it.dep_line_since)}</span>.<br>
     ${repo ? `<a href="${esc(repo)}">Repository</a> · ` : ""}${crate(it.lag)} · owners: ${it.owners?.map(esc).join(", ") || "?"} ·
-    last release <span class="nw">${esc(it.lag_last_release)}</span> · MSRV ${esc(it.lag_msrv ?? "?")} → ${esc(it.dep)} needs ${esc(it.dep_msrv ?? "?")}</p>
+    last release <span class="nw">${esc(it.lag_last_release)}</span> · MSRV ${esc(it.lag_msrv ?? "?")}${it.lag_msrv_via ? ` <span class="muted">(via ${crate(it.lag_msrv_via)})</span>` : ""} → ${esc(it.dep)} needs ${esc(it.dep_msrv ?? "?")}</p>
     <div><h3>Biggest affected crates</h3><ol>${aff}</ol></div>
     <div><h3>Also holding ${esc(it.dep)} ${esc(it.old_line)} in these trees</h3>${co ? `<ol>${co}</ol>` : '<p class="muted">None: sole blocker everywhere.</p>'}</div>
   </div></details>`;

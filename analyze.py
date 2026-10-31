@@ -48,6 +48,15 @@ for req, want in [("^1.4", [1]), ("2", [2]), ("^0.3.1", [0, 3]), ("~0.0.7", [0, 
     assert db.execute("SELECT line(?)", [req]).fetchone()[0] == want, req
 assert db.execute("SELECT ver('0.61.2-rc1')").fetchone()[0] == [0, 61, 2]
 
+# Repository URL normalized for comparison: scheme, www, case, /tree/... paths, .git and trailing slashes dropped.
+db.execute("""
+CREATE MACRO repo(u) AS nullif(regexp_replace(regexp_replace(regexp_replace(
+  lower(trim(u)), '^https?://(www\\.)?', ''), '/(tree|blob)/.*$', ''), '(\\.git)?/*$', ''), '')
+""")
+for u in ["https://github.com/google/zerocopy", "https://github.com/google/zerocopy.git", "http://www.GitHub.com/google/zerocopy/",
+          "https://github.com/google/zerocopy/tree/main/zerocopy-derive"]:
+    assert db.execute("SELECT repo(?)", [u]).fetchone()[0] == "github.com/google/zerocopy", u
+
 step(f"""
 CREATE TABLE versions AS
 SELECT id::INT id, crate_id::INT crate_id, num, rust_version, created_at::TIMESTAMPTZ created_at, line(num) ln
@@ -80,13 +89,17 @@ JOIN versions v ON v.id = dv.version_id::INT
 # ln = the line the req resolves to: a range that admits the dep's latest version resolves to it
 # (">=0.52, <0.62" with latest 0.61.2 -> 0.61); otherwise the line of the req's first version.
 step(f"""
+CREATE TABLE deps AS
+SELECT l.crate_id src, d.crate_id::INT dst, d.req, d.kind, d.optional
+FROM {csv('dependencies')} d JOIN latest l ON l.version_id = d.version_id::INT
+""")
+
+step("""
 CREATE TABLE edges AS
 WITH d AS (
-  SELECT l.crate_id src, d.crate_id::INT dst, d.req,
-         nullif(regexp_extract(d.req, '<(=?)\\s*(\\d+(?:\\.\\d+)*)', ['eq', 'u']), {{'eq': '', 'u': ''}}) up
-  FROM {csv('dependencies')} d
-  JOIN latest l ON l.version_id = d.version_id::INT
-  WHERE d.kind = '0' AND d.optional = 'f'
+  SELECT src, dst, req,
+         nullif(regexp_extract(req, '<(=?)\\s*(\\d+(?:\\.\\d+)*)', ['eq', 'u']), {'eq': '', 'u': ''}) up
+  FROM deps WHERE kind = '0' AND optional = 'f'
 )
 SELECT src, dst, req,
   CASE WHEN up IS NULL AND regexp_matches(req, '^\\s*>') THEN t.cur
@@ -178,11 +191,29 @@ WHERE o.crate_id::INT IN (SELECT lag_id FROM top)
 GROUP BY 1
 """)
 
+# MSRV of L: its own rust_version, else the one declared by its parent: a crate from the same repository
+# that depends on L in any way (zerocopy -> zerocopy-derive); the parent's promise binds L. With several
+# parents, the most downloaded wins: forks copy the upstream repository URL but often keep a stale MSRV.
+step("""
+CREATE TABLE msrv AS
+SELECT t.lag_id, coalesce(lv.rust_version, p.rv) msrv, CASE WHEN lv.rust_version IS NULL THEN p.via END msrv_via
+FROM (SELECT DISTINCT lag_id FROM top) t
+JOIN latest lv ON lv.crate_id = t.lag_id
+LEFT JOIN (
+  SELECT d.dst lag_id, arg_max(pl.rust_version, pc.d90) rv, arg_max(pc.name, pc.d90) via
+  FROM deps d
+  JOIN crates pc ON pc.id = d.src JOIN crates lc ON lc.id = d.dst JOIN latest pl ON pl.crate_id = d.src
+  WHERE d.dst IN (SELECT lag_id FROM top) AND d.src <> d.dst
+    AND repo(pc.repository) = repo(lc.repository) AND pl.rust_version IS NOT NULL
+  GROUP BY 1
+) p USING (lag_id)
+""")
+
 rows = db.execute("""
 SELECT lc.name lag, lv.num lag_version, lc.d90 lag_d90, lc.repository, ow.owners, lc.last_release::DATE lag_last_release,
        dc.name dep, lag.req, array_to_string(t.old, '.') old_line, dv.num dep_latest, dv.cur_since::DATE dep_line_since,
-       lv.rust_version lag_msrv, dv.rust_version dep_msrv,
-       ver(dv.rust_version) > ver(lv.rust_version) msrv_bump,
+       m.msrv lag_msrv, m.msrv_via lag_msrv_via, dv.rust_version dep_msrv,
+       ver(dv.rust_version) > ver(m.msrv) msrv_bump,
        t.impact, t.affected, t.sole,
        coalesce(ta.top_affected, []) top_affected, coalesce(cb.co_blockers, []) co_blockers
 FROM top t
@@ -192,6 +223,7 @@ JOIN latest lv ON lv.crate_id = t.lag_id
 JOIN crates dc ON dc.id = t.dep_id
 JOIN latest dv ON dv.crate_id = t.dep_id
 LEFT JOIN owners ow ON ow.crate_id = t.lag_id
+LEFT JOIN msrv m ON m.lag_id = t.lag_id
 LEFT JOIN top_affected ta USING (lag_id, dep_id)
 LEFT JOIN co_blockers cb USING (lag_id, dep_id)
 ORDER BY t.impact DESC, t.affected DESC
