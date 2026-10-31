@@ -60,26 +60,3 @@ Known limits:
 | `lag_msrv`, `dep_msrv`, `msrv_bump` | `rust_version` of each. `msrv_bump: true` means upgrading raises `lag`'s MSRV. `null` means unknown |
 | `top_affected` | the 10 affected crates with the most downloads: `{name, d90, sole}` |
 | `co_blockers` | the 10 other crates holding the same old line in the same trees: `{name, shared}` |
-
-## v2 idea: campaigns
-
-Single-PR ranking undervalues crates that only help together. `jni-macros → syn 2` has 10k affected
-crates but 0 where it's the sole blocker: its PR alone removes nothing, but together with
-`jni-sys-macros` it clears syn 2 from those trees. This is a coordination problem, not a ranking
-one, so v2 adds a campaign per old line (e.g. "syn 2"), built greedily (greedy set cover):
-
-1. Start with every laggard on that line not yet fixed.
-2. Pick the laggard whose upgrade removes the most duplicate-download weight *now*, i.e. the
-   `d90(R)` of affected crates where it is the last remaining blocker. Break ties by the `impact` above.
-3. Mark it fixed, recompute `k(R)` for the rest (co-blockers' shares grow, and some become sole
-   blockers), and repeat.
-
-The output is an ordered PR list with cumulative coverage, e.g. "these 8 upgrades remove syn 2
-from 90% of affected download weight". It reuses the `aff` and `share` tables, and it could become a
-"Campaigns" page next to the ranking. Merged PRs (from `prs.yml`) start pre-marked as fixed, so the
-campaign shows remaining work.
-
-Not visible in the dump: whether `D` appears in `L`'s public API. If it's internal (typical for
-derive macros and syn), a semver-compatible release of `L` reaches everyone through `cargo update`.
-If it's public, `L` needs a major bump and its dependents must upgrade too. That needs a manual
-annotation in `prs.yml`.
