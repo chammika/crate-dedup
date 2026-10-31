@@ -199,9 +199,22 @@ ORDER BY t.impact DESC, t.affected DESC
 cols = [d[0] for d in db.description]
 items = [dict(zip(cols, r), rank=i + 1) for i, r in enumerate(rows)]
 
+# Ecosystem-wide numbers for the summary boxes.
+stats = dict(zip(
+    ["crates", "edges", "crates_with_dup", "opportunities", "data_as_of"],
+    db.execute("""
+SELECT (SELECT count(*) FROM latest), (SELECT count(*) FROM edges), (SELECT count(DISTINCT root) FROM aff),
+       (SELECT count(*) FROM score), (SELECT max(created_at)::DATE FROM versions)
+""").fetchone()))
+stats["most_duplicated"] = dict(zip(["name", "crates", "lines"], db.execute("""
+SELECT c.name, count(DISTINCT a.root) n, (SELECT count(DISTINCT ln) FROM edges e WHERE e.dst = a.dep_id)
+FROM aff a JOIN crates c ON c.id = a.dep_id GROUP BY c.name, a.dep_id ORDER BY n DESC LIMIT 1
+""").fetchone()))
+
 with open(out, "w") as f:
-    json.dump({"generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "items": items},
+    json.dump({"generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "stats": stats, "items": items},
               f, default=str, separators=(",", ":"))
+print(stats)
 print(f"wrote {len(items)} items to {out}")
 for r in items[:25]:
     print(f"{r['impact']:>14,} {r['affected']:>6} {r['sole']:>6}  {r['lag']} -> {r['dep']} {r['req']} (latest {r['dep_latest']})")

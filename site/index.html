@@ -62,6 +62,23 @@
   .detail ol { margin: 0; padding-left: 1.4rem; }
   .detail li { padding: .1rem 0; }
   .detail li::marker { color: var(--muted); font-size: .85em; }
+  .updated { margin: .9rem 0 0; font-size: .85rem; color: var(--muted); }
+  .updated .dot { display: inline-block; width: .5rem; height: .5rem; border-radius: 50%; background: #3f9b5a; margin-right: .4rem; }
+  .updated.stale .dot { background: var(--rust); }
+  .pager { display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap;
+           margin: .9rem 0 0; color: var(--muted); font-size: .9rem; }
+  .pager select, .pager button { font: inherit; color: var(--text); background: var(--surface);
+           border: 1px solid var(--line); border-radius: .4rem; padding: .3rem .7rem; }
+  .pager button { cursor: pointer; }
+  .pager button:disabled { opacity: .4; cursor: default; }
+  .pager button:not(:disabled):hover, .pager select:hover { border-color: var(--rust); color: var(--rust); }
+  .pager :focus-visible { outline: 2px solid var(--rust); outline-offset: 1px; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin: 3rem 0 0; }
+  .stat { background: var(--surface); border: 1px solid var(--line); border-top: 3px solid var(--rust);
+          border-radius: .6rem; padding: 1rem 1.1rem; }
+  .stat b { display: block; font: 600 1.9rem/1.15 var(--serif); }
+  .stat span { display: block; font-size: .78rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-bottom: .35rem; }
+  .stat small { display: block; color: var(--muted); margin-top: .3rem; }
   footer { margin-top: 2rem; color: var(--muted); font-size: .85rem; }
   @media (max-width: 720px) {
     .row { grid-template-columns: 2rem 1fr 1fr 4.5rem; }
@@ -76,6 +93,7 @@
 <h1>crate<span>-</span>dedup</h1>
 <p class="lede">Crates whose outdated dependency makes the ecosystem compile two copies of the same crate,
 ranked by how much one upgrade would help. Expand a row for the reasoning.</p>
+<p class="updated" id="updated"></p>
 <details class="about"><summary>How the score works</summary>
 <p><b>Affected</b>: crates whose dependency tree contains the crate to upgrade <i>and</i> the dependency's latest line,
 so they compile the dependency twice. <b>Sole</b>: affected crates where this crate is the only one holding the old line,
@@ -94,14 +112,20 @@ Only normal, non-optional dependencies of each crate's latest version are counte
 </div>
 <div id="list"><p class="muted" style="padding:1rem">Loading…</p></div>
 </div>
-<footer id="gen"></footer>
+<nav class="pager" aria-label="Pagination">
+  <label>Show <select id="size"><option>20</option><option>50</option><option>100</option></select> per page</label>
+  <span><button id="prev" aria-label="Previous page">‹ Prev</button> <span id="pageinfo"></span> <button id="next" aria-label="Next page">Next ›</button></span>
+</nav>
+<section class="stats" id="stats" aria-label="Ecosystem summary"></section>
+<footer>Built daily from the <a href="https://crates.io/data-access">crates.io database dump</a>.
+Source and scoring: <a href="https://github.com/chammika/crate-dedup">github.com/chammika/crate-dedup</a>.</footer>
 
 <script>
 const fmt = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 });
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const crate = n => `<a href="https://crates.io/crates/${encodeURIComponent(n)}">${esc(n)}</a>`;
 const safeUrl = u => /^https?:\/\//.test(u ?? "") ? u : null;
-let items = [], sortKey = "rank", asc = true, maxImpact = 1;
+let items = [], sortKey = "rank", asc = true, maxImpact = 1, page = 0;
 
 function msrv(it) {
   if (it.msrv_bump === true) return `<span class="badge warn" title="${esc(it.dep)} ${esc(it.dep_latest)} needs Rust ${esc(it.dep_msrv)}; ${esc(it.lag)} declares ${esc(it.lag_msrv)}">bump</span>`;
@@ -138,14 +162,40 @@ function draw() {
   const rows = items
     .filter(it => !q || [it.lag, it.dep, ...(it.owners ?? [])].some(s => s?.toLowerCase().includes(q)))
     .sort((a, b) => (a[sortKey] < b[sortKey] ? -1 : a[sortKey] > b[sortKey] ? 1 : 0) * (asc ? 1 : -1));
-  document.getElementById("list").innerHTML = rows.map(render).join("") || '<p class="muted">No matches.</p>';
+  const size = +document.getElementById("size").value, pages = Math.max(1, Math.ceil(rows.length / size));
+  page = Math.min(page, pages - 1);
+  document.getElementById("list").innerHTML =
+    rows.slice(page * size, (page + 1) * size).map(render).join("") || '<p class="muted" style="padding:1rem">No matches.</p>';
+  document.getElementById("pageinfo").textContent = `Page ${page + 1} of ${pages} · ${rows.length} items`;
+  document.getElementById("prev").disabled = page === 0;
+  document.getElementById("next").disabled = page >= pages - 1;
+}
+const go = p => { page = p; draw(); document.querySelector(".table").scrollIntoView({ block: "start" }); };
+document.getElementById("prev").addEventListener("click", () => go(page - 1));
+document.getElementById("next").addEventListener("click", () => go(page + 1));
+document.getElementById("size").addEventListener("change", () => { page = 0; draw(); });
+
+function summary(d) {
+  const s = d.stats, gen = new Date(d.generated_at), days = Math.floor((Date.now() - gen) / 864e5);
+  const el = document.getElementById("updated");
+  el.classList.toggle("stale", days > 2);
+  el.innerHTML = `<span class="dot"></span>Updated ${esc(gen.toISOString().slice(0, 16).replace("T", " "))} UTC
+    (${days === 0 ? "today" : days === 1 ? "yesterday" : `${days} days ago`}) · data through ${esc(s.data_as_of)} · rebuilt daily`;
+  const box = (label, value, note) => `<div class="stat"><span>${label}</span><b>${value}</b><small>${note}</small></div>`;
+  document.getElementById("stats").innerHTML = [
+    box("Crates analyzed", fmt.format(s.crates), "latest version of every crate on crates.io"),
+    box("Dependency edges", fmt.format(s.edges), "normal, non-optional dependencies"),
+    box("Compiling a duplicate", fmt.format(s.crates_with_dup), `${(100 * s.crates_with_dup / s.crates).toFixed(0)}% of crates build some dependency twice`),
+    box("Most duplicated", esc(s.most_duplicated.name), `${fmt.format(s.most_duplicated.crates)} crates affected · ${s.most_duplicated.lines} lines in use`),
+    box("Upgrade opportunities", fmt.format(s.opportunities), `crate → outdated dependency pairs; top ${items.length} listed`),
+  ].join("");
 }
 
-document.getElementById("q").addEventListener("input", draw);
+document.getElementById("q").addEventListener("input", () => { page = 0; draw(); });
 document.querySelectorAll(".head button").forEach(b => b.addEventListener("click", () => {
   const k = b.dataset.k;
   asc = k === sortKey ? !asc : ["rank", "lag", "dep"].includes(k);
-  sortKey = k;
+  sortKey = k; page = 0;
   document.querySelectorAll(".head button").forEach(x => x.removeAttribute("aria-sort"));
   b.setAttribute("aria-sort", asc ? "ascending" : "descending");
   draw();
@@ -154,7 +204,7 @@ document.querySelectorAll(".head button").forEach(b => b.addEventListener("click
 fetch("report.json").then(r => r.json()).then(d => {
   items = d.items;
   maxImpact = Math.max(1, ...items.map(it => it.impact));
-  document.getElementById("gen").textContent = `Updated ${d.generated_at.slice(0, 10)} from the crates.io database dump · ${items.length} items`;
+  summary(d);
   draw();
 }).catch(e => { document.getElementById("list").innerHTML = `<p class="warn">Failed to load report.json: ${esc(e)}</p>`; });
 </script>
