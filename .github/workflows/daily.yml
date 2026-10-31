@@ -21,10 +21,28 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.3.3  # no floating major tag published
+
+      # report.json depends only on the dump and analyze.py. The dump's ETag changes only when
+      # crates.io publishes a new one (daily), so reuse the cached report unless one of them changed.
+      - name: Get dump version
+        id: dump
+        run: |
+          etag=$(curl -sSfIL https://static.crates.io/db-dump.tar.gz | grep -i '^etag:' | tail -1 | cut -d' ' -f2 | tr -dc '[:alnum:]-')
+          test -n "$etag"
+          echo "etag=$etag" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v6
+        id: report
+        with:
+          path: site/report.json
+          key: report-${{ steps.dump.outputs.etag }}-${{ hashFiles('analyze.py') }}
+
+      - if: steps.report.outputs.cache-hit != 'true'
+        uses: astral-sh/setup-uv@v10.3.3  # no floating major tag published
 
       # Stream-extract only the CSVs analyze.py reads; the 2 GB tarball never touches disk.
       - name: Download crates.io dump
+        if: steps.report.outputs.cache-hit != 'true'
         run: |
           mkdir dump
           curl -sSfL https://static.crates.io/db-dump.tar.gz | tar -xzf - -C dump --strip-components=2 --wildcards \
@@ -33,7 +51,8 @@ jobs:
             '*/data/crate_owners.csv' '*/data/users.csv' '*/data/teams.csv'
           ls -lh dump
 
-      - run: uv run analyze.py dump site/report.json
+      - if: steps.report.outputs.cache-hit != 'true'
+        run: uv run analyze.py dump site/report.json
 
       - uses: actions/upload-pages-artifact@v5
         with:
