@@ -1,5 +1,9 @@
 # crate-dedup
 
+**🔗 Live ranking: [chammika.github.io/crate-dedup](https://chammika.github.io/crate-dedup/)**: the top 500
+upgrades that would remove duplicate crates from the ecosystem, rebuilt daily from the crates.io dump.
+Expand any row to see which crates benefit, who else holds the old version, and who maintains it.
+
 Finds crates on crates.io whose outdated dependency forces the rest of the ecosystem to compile
 two copies of the same crate (e.g. `syn 2` and `syn 3`), and ranks them by how much one upgrade
 PR would help.
