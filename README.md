@@ -14,6 +14,24 @@ uv run analyze.py <crates.io-dump>/data report.json
 
 Input: the daily dump at https://static.crates.io/db-dump.tar.gz (CSV files under `data/`).
 
+### Past rankings and history
+
+```
+uv run analyze.py <dump>/data report.json --as-of 2026-10-01 --archive <dir> --history <dir>
+```
+
+- `--as-of DATE` rebuilds the ranking as it stood at the start of `DATE`. Versions published later are
+  dropped, each crate's current version is re-derived with crates.io's rule (highest non-yanked stable
+  release), and `d90` covers the 90 days before `DATE`.
+- `--archive DIR` holds the older daily download files that the dump's 90-day window doesn't cover, from
+  https://static.crates.io/archive/version-downloads/ (`<date>.csv`). The script warns if any day is missing.
+- `--history DIR` also writes a slim `<date>.json` snapshot (rank, crates, impact, affected, sole). Snapshots
+  live on the `history` branch.
+
+Rebuilt rankings are approximate (`"approximate": true`). Yank flags and owners are today's, because the
+dump doesn't record when they changed. Measured error: rebuilding today's date from today's dump gives the
+same top-100 set as the live ranking, with a median rank difference of 1.
+
 ## Model
 
 - **Graph:** one node per crate, using its current (default) version. Edges are that version's
