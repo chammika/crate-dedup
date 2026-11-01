@@ -11,6 +11,7 @@ crates.io's per-day download archive (--archive) for days older than the dump's 
 --history also writes a slim <date>.json snapshot of the ranking into DIR, for rank changes over time.
 """
 import argparse
+import datetime as dt
 import json
 import os
 import time
@@ -275,6 +276,50 @@ ORDER BY t.impact DESC, t.affected DESC, t.lag_id, t.dep_id
 cols = [d[0] for d in db.description]
 items = [dict(zip(cols, r), rank=i + 1) for i, r in enumerate(rows)]
 
+# Rank changes against earlier snapshots in --history: the one closest to 7 and 30 days before asof.
+def snapshot(days, tol):
+    target, found = dt.date.fromisoformat(asof) - dt.timedelta(days), []
+    for f in os.listdir(args.history) if args.history and os.path.isdir(args.history) else []:
+        try:
+            d = dt.date.fromisoformat(f.removesuffix(".json"))
+        except ValueError:
+            continue
+        if f.endswith(".json") and d < dt.date.fromisoformat(asof) and abs((d - target).days) <= tol:
+            found.append((abs((d - target).days), d))
+    return json.load(open(f"{args.history}/{min(found)[1]}.json")) if found else None
+
+
+key = lambda i: (i["lag"], i["dep"], i["old_line"])
+history, fixed = {}, []
+for label, days, tol in [("d7", 7, 3), ("d30", 30, 10)]:
+    snap = snapshot(days, tol)
+    if not snap:
+        continue
+    history[label] = {"as_of": snap["as_of"], "approximate": snap["approximate"]}
+    prev = {key(p): p for p in snap["items"]}
+    for i in items:
+        p = prev.get(key(i))
+        i[f"rank_{label}"] = p and p["rank"]
+        if label == "d30":
+            i["prev_d30"] = p and {"affected": p["affected"], "impact": p["impact"]}
+    if label == "d30":
+        # Fixed: ranked back then, and the crate has since released a version that no longer holds that old line.
+        db.execute("CREATE TEMP TABLE prev (lag VARCHAR, dep VARCHAR, old_line VARCHAR, rank INT, impact BIGINT)")
+        db.executemany("INSERT INTO prev VALUES (?, ?, ?, ?, ?)",
+                       [[p["lag"], p["dep"], p["old_line"], p["rank"], p["impact"]] for p in snap["items"]])
+        rows = db.execute(f"""
+        SELECT p.lag, p.dep, p.old_line, p.rank prev_rank, p.impact prev_impact, lv.num version, v.created_at::DATE released,
+               (SELECT min(e.req) FROM deps e WHERE e.src = lc.id AND e.dst = dc.id AND e.kind = '0') new_req
+        FROM prev p JOIN crates lc ON lc.name = p.lag JOIN crates dc ON dc.name = p.dep
+        JOIN latest lv ON lv.crate_id = lc.id JOIN versions v ON v.id = lv.version_id
+        WHERE v.created_at::DATE >= DATE '{snap["as_of"]}'
+          AND NOT EXISTS (SELECT 1 FROM lag WHERE lag.lag_id = lc.id AND lag.dep_id = dc.id
+                          AND array_to_string(lag.old, '.') = p.old_line)
+        ORDER BY p.rank
+        """).fetchall()
+        fixed = [dict(zip([d[0] for d in db.description], r)) for r in rows]
+print(f"history: {history} | fixed since d30: {len(fixed)}")
+
 # Ecosystem-wide numbers for the summary boxes.
 stats = dict(zip(
     ["crates", "edges", "crates_with_dup", "opportunities", "data_as_of", "in_grace"],
@@ -292,7 +337,8 @@ FROM aff a JOIN crates c ON c.id = a.dep_id GROUP BY c.name, a.dep_id ORDER BY n
 """).fetchone()))
 
 with open(out, "w") as f:
-    json.dump({"generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "stats": stats, "items": items},
+    json.dump({"generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "stats": stats,
+               "history": history, "fixed": fixed, "items": items},
               f, default=str, separators=(",", ":"))
 print(stats)
 

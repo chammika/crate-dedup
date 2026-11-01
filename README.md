@@ -88,3 +88,13 @@ wins, because forks copy the upstream repository URL but often keep a stale MSRV
 | `lag_msrv`, `lag_msrv_via`, `dep_msrv`, `msrv_bump` | `rust_version` of each. `msrv_bump: true` means upgrading raises `lag`'s MSRV. `null` means unknown. If `lag` declares none, `lag_msrv` is inherited from its parent, and `lag_msrv_via` names it (see MSRV inference above) |
 | `top_affected` | the 10 affected crates with the most downloads: `{name, d90, sole}` |
 | `co_blockers` | the 10 other crates holding the same old line in the same trees: `{name, shared}` |
+| `rank_d7`, `rank_d30` | rank in the snapshot closest to 7 / 30 days earlier (from `--history`). `null` means not ranked then |
+| `prev_d30` | `{affected, impact}` from the 30-day snapshot, for "since last month" |
+
+Top level, next to `items`: `history` gives the `as_of` date and `approximate` flag of the snapshots
+compared against. `fixed` lists pairs ranked in the 30-day snapshot whose crate has since released a
+version without that old line: `{lag, dep, old_line, prev_rank, prev_impact, version, released, new_req}`.
+`new_req` is `null` if the dependency was dropped.
+
+The daily workflow checks out the `history` branch, passes it as `--history`, and pushes that day's
+snapshot back to it.
