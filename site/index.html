@@ -64,14 +64,26 @@
   .badge { font-size: .72rem; padding: .05rem .4rem; border-radius: 1rem; border: 1px solid var(--line); color: var(--muted); }
   .warn { color: var(--rust); border-color: var(--rust); }
   .good { color: var(--ok); border-color: var(--ok); }
-  .detail { padding: .2rem 2.4rem 1.4rem; display: grid; grid-template-columns: 1fr 1fr; gap: 0 2.5rem; }
-  .detail p { grid-column: 1 / -1; margin: .3rem 0 .8rem; max-width: 60rem; }
-  .detail .story { font: 1.05rem/1.55 var(--serif); }
-  .detail h3 { font: 600 .78rem/1 system-ui, sans-serif; text-transform: uppercase; letter-spacing: .06em;
-               color: var(--muted); margin: .6rem 0 .5rem; }
-  .detail ol { margin: 0; padding-left: 1.4rem; }
-  .detail li { padding: .1rem 0; }
-  .detail li::marker { color: var(--muted); font-size: .85em; }
+  .detail { padding: .4rem 2.4rem 1.6rem; display: grid; grid-template-columns: minmax(0, 1fr) 17rem; gap: 1.2rem 2.5rem; }
+  .story { font: 1.07rem/1.6 var(--serif); margin: 0; max-width: 46rem; }
+  .story p { margin: 0 0 .55rem; overflow-wrap: anywhere; }
+  .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: .6rem; margin: 1rem 0 1.2rem; }
+  .tile { border: 1px solid var(--line); border-radius: .5rem; padding: .55rem .75rem; background: var(--surface); }
+  .tile > span:first-child { display: block; font-size: .7rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+  .tile b { font: 600 1.35rem/1.25 var(--serif); }
+  .tile small { color: var(--muted); margin-left: .3rem; }
+  .lists { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
+  .detail h3 { font: 600 .74rem/1 system-ui, sans-serif; text-transform: uppercase; letter-spacing: .06em;
+               color: var(--muted); margin: 0 0 .55rem; }
+  .bars { list-style: none; margin: 0; padding: 0; }
+  .bars li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .2rem .6rem; padding: .22rem 0; font-size: .92rem; }
+  .bars li > :first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bars .v { color: var(--muted); font-variant-numeric: tabular-nums; font-size: .85rem; }
+  .bars i { grid-column: 1 / -1; height: 3px; border-radius: 2px; background: var(--rust); opacity: .45; width: var(--w); }
+  .meta { border-left: 1px solid var(--line); padding-left: 1.4rem; margin: 0; font-size: .9rem; }
+  .meta dt { font-size: .7rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-top: .8rem; }
+  .meta dt:first-child { margin-top: 0; }
+  .meta dd { margin: .15rem 0 0; }
   .updated { margin: .9rem 0 0; font-size: .85rem; color: var(--muted); }
   .updated .dot { display: inline-block; width: .5rem; height: .5rem; border-radius: 50%; background: #3f9b5a; margin-right: .4rem; }
   .updated.stale .dot { background: var(--rust); }
@@ -105,7 +117,10 @@
   @media (max-width: 720px) {
     .row { grid-template-columns: .8rem 2rem 1fr 1fr 4.5rem; }
     .row > :nth-child(n+6) { display: none; }
-    .detail { grid-template-columns: 1fr; padding: .2rem 1rem 1rem; }
+    .detail { grid-template-columns: minmax(0, 1fr); padding: .2rem 1rem 1rem; }
+    .tiles { grid-template-columns: 1fr 1fr; }
+    .lists { grid-template-columns: minmax(0, 1fr); }
+    .meta { border-left: 0; padding-left: 0; border-top: 1px solid var(--line); padding-top: 1rem; }
     h1 { font-size: 1.9rem; }
   }
 </style>
@@ -191,12 +206,22 @@ function delta(it) {
   const d = it.rank_d30 - it.rank;
   return `<span class="delta ${d > 0 ? "up" : d < 0 ? "down" : "same"}" title="#${it.rank_d30} → #${it.rank} ${t}">${d > 0 ? "▲" + d : d < 0 ? "▼" + -d : "="}</span>`;
 }
-function lastMonth(it) {
+const lineOf = v => { const [ma, mi] = String(v).split("."); return ma === "0" ? `0.${mi}` : ma; };
+function trend(it) {
   if (!hist.d30) return "";
   const when = `${esc(hist.d30.as_of)}${approx(hist.d30)}`;
-  if (!it.prev_d30) return `<br><b>New</b> in the top 500 since ${when}.`;
-  const p = it.prev_d30, ch = (a, b) => `${fmt.format(a)} → ${fmt.format(b)}`;
-  return `<br>Since ${when}: rank #${it.rank_d30} → #${it.rank}, affected ${ch(p.affected, it.affected)}, impact ${ch(p.impact, it.impact)}.`;
+  if (!it.prev_d30) return `<p>It entered the top 500 since ${when}.</p>`;
+  const a = it.prev_d30.affected, b = it.affected;
+  const verb = b > a ? "grown" : b < a ? "shrunk" : "held steady";
+  return `<p>Since ${when} the cost has ${verb}: ${fmt.format(a)} → <b>${fmt.format(b)}</b> affected crates
+    (rank #${it.rank_d30} → #${it.rank}).</p>`;
+}
+function msrvStory(it) {
+  const need = `${esc(it.dep)} ${esc(it.dep_latest)} needs Rust ${esc(it.dep_msrv)}`;
+  const own = `${esc(it.lag_msrv)}${it.lag_msrv_via ? ` (inherited from ${esc(it.lag_msrv_via)})` : ""}`;
+  if (it.msrv_bump === true) return `<p><b>The catch:</b> ${need}, above ${esc(it.lag)}'s MSRV of ${own}, so the PR also raises its minimum Rust version.</p>`;
+  if (it.msrv_bump === false) return `<p>No MSRV bump needed: ${need} and ${esc(it.lag)} already requires ${own}.</p>`;
+  return `<p>${esc(it.lag)} declares no MSRV${it.dep_msrv ? `; ${need}` : ""}.</p>`;
 }
 const daysSince = d => Math.round((asOf - new Date(d)) / 864e5);
 const via = it => it.lag_msrv_via ? ` (inherited from ${esc(it.lag_msrv_via)}, same repository)` : "";
@@ -208,8 +233,12 @@ function msrv(it) {
 
 function render(it) {
   const repo = safeUrl(it.repository);
-  const aff = it.top_affected.map(a => `<li>${crate(a.name)} <span class="muted">${fmt.format(a.d90)}/90d</span>${a.sole ? ' <span class="badge" title="this upgrade alone removes the duplicate here">sole</span>' : ""}</li>`).join("");
-  const co = it.co_blockers.map(c => `<li>${crate(c.name)} <span class="muted">in ${fmt.format(c.shared)} trees</span></li>`).join("");
+  const top = Math.max(1, ...it.top_affected.map(a => a.d90)), topCo = Math.max(1, ...it.co_blockers.map(c => c.shared));
+  const aff = it.top_affected.map(a => `<li><span>${crate(a.name)}${a.sole ? ' <span class="badge" title="this upgrade alone removes the duplicate here">sole</span>' : ""}</span>
+    <span class="v">${fmt.format(a.d90)}/90d</span><i style="--w:${(100 * a.d90 / top).toFixed(0)}%"></i></li>`).join("");
+  const co = it.co_blockers.map(c => `<li><span>${crate(c.name)}</span><span class="v">${fmt.format(c.shared)} trees</span>
+    <i style="--w:${(100 * c.shared / topCo).toFixed(0)}%"></i></li>`).join("");
+  const others = it.affected - it.sole, newLine = `${esc(it.dep)} ${esc(lineOf(it.dep_latest))}`;
   return `<details class="item"><summary><span class="row">
     <span class="chev" aria-hidden="true">▶</span>
     <span class="num rank">${it.rank}</span>
@@ -220,14 +249,34 @@ function render(it) {
     <span class="num">${fmt.format(it.sole)}</span>
     <span>${msrv(it)}</span></span></summary>
   <div class="detail">
-    <p class="story">If <b>${esc(it.lag)}</b> moves <code>${esc(it.dep)}</code> from <code>${esc(it.req)}</code> to ${esc(it.dep_latest)},
-    <b>${it.affected.toLocaleString()}</b> crates that currently compile ${esc(it.dep)} twice are affected, and
-    <b>${it.sole.toLocaleString()}</b> of them lose the duplicate entirely (${esc(it.lag)} is their only blocker).
-    ${esc(it.dep)}'s latest line (now ${esc(it.dep_latest)}) has been out since <span class="nw">${esc(it.dep_line_since)}</span> (${daysSince(it.dep_line_since)} days).${lastMonth(it)}<br>
-    ${repo ? `<a href="${esc(repo)}">Repository</a> · ` : ""}${crate(it.lag)} · owners: ${it.owners?.map(esc).join(", ") || "?"} ·
-    last release <span class="nw">${esc(it.lag_last_release)}</span> · MSRV ${esc(it.lag_msrv ?? "?")}${it.lag_msrv_via ? ` <span class="muted">(via ${crate(it.lag_msrv_via)})</span>` : ""} → ${esc(it.dep)} needs ${esc(it.dep_msrv ?? "?")}</p>
-    <div><h3>Biggest affected crates</h3><ol>${aff}</ol></div>
-    <div><h3>Also holding ${esc(it.dep)} ${esc(it.old_line)} in these trees</h3>${co ? `<ol>${co}</ol>` : '<p class="muted">None: sole blocker everywhere.</p>'}</div>
+    <div>
+      <div class="story">
+        <p>If <b>${esc(it.lag)}</b> moves <code>${esc(it.dep)}</code> from <code>${esc(it.req)}</code> to <b>${esc(it.dep_latest)}</b>,
+        <b>${it.sole.toLocaleString()}</b> crates stop compiling ${esc(it.dep)} twice${others ? `, and <b>${others.toLocaleString()}</b> more
+        get one blocker closer (other crates also hold ${esc(it.dep)} ${esc(it.old_line)} in their trees)` : ""}.
+        ${newLine} has been out for <b>${daysSince(it.dep_line_since)} days</b>.</p>
+        ${trend(it)}${msrvStory(it)}
+      </div>
+      <div class="tiles">
+        <div class="tile"><span>Affected</span><b>${fmt.format(it.affected)}</b></div>
+        <div class="tile"><span>Sole blocker</span><b>${fmt.format(it.sole)}</b><small>${Math.round(100 * it.sole / it.affected)}%</small></div>
+        <div class="tile"><span>Impact</span><b>${fmt.format(it.impact)}</b><small>dl/90d</small></div>
+        <div class="tile"><span>Rank</span><b>#${it.rank}</b>${delta(it)}</div>
+      </div>
+      <div class="lists">
+        <div><h3>Biggest affected crates</h3><ol class="bars">${aff}</ol></div>
+        <div><h3>Also holding ${esc(it.dep)} ${esc(it.old_line)}</h3>${co ? `<ol class="bars">${co}</ol>` : '<p class="muted">None: sole blocker everywhere.</p>'}</div>
+      </div>
+    </div>
+    <dl class="meta">
+      <dt>Upgrade</dt><dd><code>${esc(it.dep)} ${esc(it.req)}</code> → <code>${esc(it.dep_latest)}</code></dd>
+      <dt>Latest line</dt><dd>${newLine}.x since <span class="nw">${esc(it.dep_line_since)}</span></dd>
+      <dt>MSRV</dt><dd>${esc(it.lag_msrv ?? "unknown")}${it.lag_msrv_via ? ` <span class="muted">via ${crate(it.lag_msrv_via)}</span>` : ""} → needs ${esc(it.dep_msrv ?? "?")} ${msrv(it)}</dd>
+      <dt>Crate</dt><dd>${esc(it.lag)} ${esc(it.lag_version)} · released <span class="nw">${esc(it.lag_last_release)}</span></dd>
+      <dt>Owners</dt><dd>${it.owners?.map(esc).join(", ") || "unknown"}</dd>
+      <dt>Links</dt><dd>${repo ? `<a href="${esc(repo)}">Repository</a> · ` : ""}<a href="https://crates.io/crates/${encodeURIComponent(it.lag)}">crates.io</a> ·
+        <a href="https://docs.rs/${encodeURIComponent(it.lag)}">docs.rs</a></dd>
+    </dl>
   </div></details>`;
 }
 
