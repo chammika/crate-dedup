@@ -8,12 +8,12 @@
   :root {
     color-scheme: light dark;
     --bg: #faf6f1; --surface: #fffdfa; --text: #2a2320; --muted: #6e625a; --line: #e6dcd2;
-    --rust: #a8380f; --rust-soft: #f3e1d6; --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+    --rust: #a8380f; --rust-soft: #f3e1d6; --ok: #2e7d4a; --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
     --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   }
   @media (prefers-color-scheme: dark) {
     :root { --bg: #171311; --surface: #1f1916; --text: #ece4dc; --muted: #a89a8f; --line: #3a302b;
-            --rust: #f0743e; --rust-soft: #3a2219; }
+            --rust: #f0743e; --rust-soft: #3a2219; --ok: #6cc58a; }
   }
   * { box-sizing: border-box; }
   body { font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--text);
@@ -63,6 +63,7 @@
               border-radius: 2px; opacity: .55; }
   .badge { font-size: .72rem; padding: .05rem .4rem; border-radius: 1rem; border: 1px solid var(--line); color: var(--muted); }
   .warn { color: var(--rust); border-color: var(--rust); }
+  .good { color: var(--ok); border-color: var(--ok); }
   .detail { padding: .2rem 2.4rem 1.4rem; display: grid; grid-template-columns: 1fr 1fr; gap: 0 2.5rem; }
   .detail p { grid-column: 1 / -1; margin: .3rem 0 .8rem; max-width: 60rem; }
   .detail .story { font: 1.05rem/1.55 var(--serif); }
@@ -88,10 +89,9 @@
   .stat b { display: block; font: 600 1.9rem/1.15 var(--serif); }
   .stat span { display: block; font-size: .78rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-bottom: .35rem; }
   .stat small { display: block; color: var(--muted); margin-top: .3rem; }
-  .delta { font-size: .72rem; font-weight: 600; margin-left: .35rem; font-variant-numeric: tabular-nums; }
-  .delta.up { color: var(--rust); }
-  .delta.down, .delta.same { color: var(--muted); font-weight: 400; }
-  .delta.new { color: var(--rust); border: 1px solid var(--rust); border-radius: 1rem; padding: 0 .35rem; font-weight: 500; }
+  .delta { font-size: .72rem; margin-left: .4rem; padding: .05rem .4rem; border-radius: 1rem; border: 1px solid var(--line);
+           color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .delta.up, .delta.new { color: var(--rust); border-color: var(--rust); font-weight: 600; }
   .changes { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 1rem; }
   .changes:empty { display: none; }
   .card { background: var(--surface); border: 1px solid var(--line); border-radius: .6rem; padding: 1rem 1.2rem; }
@@ -150,7 +150,7 @@ duplicate in their next release, and new lines still get patches. This filters t
 <p class="scope"><b>MSRV</b> is not part of the score; it shows how hard the upgrade is.
 <span class="badge warn">bump</span> means <i>D</i>'s latest version needs a newer Rust than <i>L</i> supports, so the PR
 also raises <i>L</i>'s minimum supported Rust version, which some maintainers won't accept.
-<span class="badge">ok</span> means no raise is needed. <b>?</b> means no MSRV is declared. When <i>L</i> declares none,
+<span class="badge good">ok</span> means no raise is needed. <span class="badge">unknown</span> means no MSRV is declared. When <i>L</i> declares none,
 it inherits the MSRV of its parent (the most downloaded crate from the same repository that depends on <i>L</i>, e.g.
 zerocopy-derive from zerocopy), shown as "via" in the row details.</p>
 </details>
@@ -202,8 +202,8 @@ const daysSince = d => Math.round((asOf - new Date(d)) / 864e5);
 const via = it => it.lag_msrv_via ? ` (inherited from ${esc(it.lag_msrv_via)}, same repository)` : "";
 function msrv(it) {
   if (it.msrv_bump === true) return `<span class="badge warn" title="${esc(it.dep)} ${esc(it.dep_latest)} needs Rust ${esc(it.dep_msrv)}; ${esc(it.lag)} supports ${esc(it.lag_msrv)}${via(it)}">bump</span>`;
-  if (it.msrv_bump === false) return `<span class="badge" title="no MSRV raise needed">ok</span>`;
-  return `<span class="muted" title="MSRV not declared">?</span>`;
+  if (it.msrv_bump === false) return `<span class="badge good" title="no MSRV raise needed">ok</span>`;
+  return `<span class="badge" title="no MSRV declared by the crate or a parent">unknown</span>`;
 }
 
 function render(it) {
