@@ -4,16 +4,27 @@
 # ///
 """crates.io dump dir -> report.json of crates whose old dependency lines force duplicates downstream.
 
-Usage: uv run analyze.py <dump-data-dir> [out.json]
+Usage: uv run analyze.py <dump-data-dir> [out.json] [--as-of YYYY-MM-DD --archive DIR] [--history DIR]
+
+--as-of rebuilds the ranking as it stood at the start of that day (approximate, see README), using
+crates.io's per-day download archive (--archive) for days older than the dump's 90-day window.
+--history also writes a slim <date>.json snapshot of the ranking into DIR, for rank changes over time.
 """
+import argparse
 import json
-import sys
+import os
 import time
 
 import duckdb
 
-data = sys.argv[1]
-out = sys.argv[2] if len(sys.argv) > 2 else "report.json"
+ap = argparse.ArgumentParser()
+ap.add_argument("data")
+ap.add_argument("out", nargs="?", default="report.json")
+ap.add_argument("--as-of")
+ap.add_argument("--archive")
+ap.add_argument("--history")
+args = ap.parse_args()
+data, out, AS_OF = args.data, args.out, args.as_of
 LIMIT, DETAIL = 500, 10  # ranked items, detail rows per item
 GRACE_DAYS = 30  # don't rank a dependency line released less than this many days ago; PRs that early are premature
 db = duckdb.connect()
@@ -58,31 +69,57 @@ for u in ["https://github.com/google/zerocopy", "https://github.com/google/zeroc
           "https://github.com/google/zerocopy/tree/main/zerocopy-derive"]:
     assert db.execute("SELECT repo(?)", [u]).fetchone()[0] == "github.com/google/zerocopy", u
 
+# With --as-of, versions published on or after that day don't exist yet, which makes every later
+# table (latest versions, line ages, last release) an as-of view.
 step(f"""
 CREATE TABLE versions AS
-SELECT id::INT id, crate_id::INT crate_id, num, rust_version, created_at::TIMESTAMPTZ created_at, line(num) ln
+SELECT id::INT id, crate_id::INT crate_id, num, rust_version, created_at::TIMESTAMPTZ created_at, line(num) ln,
+       yanked = 't' yanked
 FROM {csv('versions')}
+{f"WHERE created_at::TIMESTAMPTZ < DATE '{AS_OF}'" if AS_OF else ""}
 """)
+asof = AS_OF or str(db.execute("SELECT max(created_at)::DATE FROM versions").fetchone()[0])
 
-# d90 = downloads of all versions in the last 90 days: "how much is this crate used right now".
+# Daily downloads for the 90 full days before asof: the dump holds about the last 90 days, and the archive
+# (static.crates.io/archive/version-downloads/<date>.csv) has older days for --as-of.
+archive = (f"""UNION ALL SELECT regexp_extract(filename, '(\\d{{4}}-\\d{{2}}-\\d{{2}})\\.csv$', 1) date, downloads, version_id
+             FROM read_csv('{args.archive}/*.csv', header=true, all_varchar=true, filename=true)"""
+           if args.archive else "")
+step(f"""
+CREATE TABLE daily AS
+SELECT date::DATE date, version_id::INT version_id, max(downloads::BIGINT) downloads
+FROM (SELECT date, downloads, version_id FROM {csv('version_downloads')} {archive})
+WHERE date::DATE >= DATE '{asof}' - 90 AND date::DATE < DATE '{asof}'
+GROUP BY ALL
+""")
+d90_days = db.execute("SELECT count(DISTINCT date) FROM daily").fetchone()[0]
+if d90_days < 90:
+    print(f"WARNING: only {d90_days} of 90 download days before {asof}; pass --archive with the missing days")
+
+# d90 = downloads of all versions in the 90 days before asof: "how much is this crate used right now".
 step(f"""
 CREATE TABLE crates AS
 SELECT c.id::INT id, c.name, c.repository, d.downloads::BIGINT downloads, coalesce(r.d90, 0) d90, v.last_release
 FROM {csv('crates')} c
 JOIN {csv('crate_downloads')} d ON d.crate_id = c.id
-LEFT JOIN (SELECT v.crate_id, sum(vd.downloads::BIGINT) d90
-           FROM {csv('version_downloads')} vd JOIN versions v ON v.id = vd.version_id::INT GROUP BY 1) r
+LEFT JOIN (SELECT v.crate_id, sum(dd.downloads) d90 FROM daily dd JOIN versions v ON v.id = dd.version_id GROUP BY 1) r
   ON r.crate_id = c.id::INT
 LEFT JOIN (SELECT crate_id, max(created_at) last_release FROM versions GROUP BY 1) v ON v.crate_id = c.id::INT
 """)
 
 # cur_since = first release of the crate's current line (e.g. syn 3.0.0): how long the gap has existed.
+# Each crate's current version: crates.io's default_versions, or for --as-of the same rule rebuilt
+# (highest non-yanked stable version, else highest overall). ponytail: uses today's yanked flags, since
+# the dump doesn't say when a version was yanked.
+default_version = (f"""SELECT crate_id, arg_max(id, (NOT yanked, num NOT LIKE '%-%', ver(num), created_at)) version_id
+                       FROM versions GROUP BY 1""" if AS_OF else
+                   f"SELECT crate_id::INT crate_id, version_id::INT version_id FROM {csv('default_versions')}")
 step(f"""
 CREATE TABLE latest AS
-SELECT dv.crate_id::INT crate_id, v.id version_id, v.num, v.rust_version, v.ln cur,
+SELECT dv.crate_id, v.id version_id, v.num, v.rust_version, v.ln cur,
        (SELECT min(w.created_at) FROM versions w WHERE w.crate_id = v.crate_id AND w.ln = v.ln) cur_since
-FROM {csv('default_versions')} dv
-JOIN versions v ON v.id = dv.version_id::INT
+FROM ({default_version}) dv
+JOIN versions v ON v.id = dv.version_id
 """)
 
 # Edges from each crate's latest version. Normal deps only (kind 0); optional ones skipped.
@@ -166,7 +203,7 @@ GROUP BY ALL
 step(f"""
 CREATE TABLE top AS
 SELECT s.* FROM score s JOIN latest dv ON dv.crate_id = s.dep_id
-WHERE dv.cur_since::DATE <= (SELECT max(created_at)::DATE FROM versions) - {GRACE_DAYS}
+WHERE dv.cur_since::DATE <= DATE '{asof}' - {GRACE_DAYS}
 ORDER BY impact DESC, affected DESC, lag_id, dep_id LIMIT {LIMIT}
 """)
 
@@ -243,11 +280,12 @@ stats = dict(zip(
     ["crates", "edges", "crates_with_dup", "opportunities", "data_as_of", "in_grace"],
     db.execute("""
 SELECT (SELECT count(*) FROM latest), (SELECT count(*) FROM edges), (SELECT count(DISTINCT root) FROM aff),
-       (SELECT count(*) FROM score), (SELECT max(created_at)::DATE FROM versions),
+       (SELECT count(*) FROM score), DATE '{asof}',
        (SELECT count(*) FROM score s JOIN latest dv ON dv.crate_id = s.dep_id
-        WHERE dv.cur_since::DATE > (SELECT max(created_at)::DATE FROM versions) - {GRACE_DAYS})
-""".replace("{GRACE_DAYS}", str(GRACE_DAYS))).fetchone()))
+        WHERE dv.cur_since::DATE > DATE '{asof}' - {GRACE_DAYS})
+""".replace("{GRACE_DAYS}", str(GRACE_DAYS)).replace("{asof}", asof)).fetchone()))
 stats["grace_days"] = GRACE_DAYS
+stats["approximate"] = bool(AS_OF)  # rebuilt after the fact: today's yank flags and owners
 stats["most_duplicated"] = dict(zip(["name", "crates", "lines"], db.execute("""
 SELECT c.name, count(DISTINCT a.root) n, (SELECT count(DISTINCT ln) FROM edges e WHERE e.dst = a.dep_id)
 FROM aff a JOIN crates c ON c.id = a.dep_id GROUP BY c.name, a.dep_id ORDER BY n DESC, c.name LIMIT 1
@@ -257,6 +295,15 @@ with open(out, "w") as f:
     json.dump({"generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "stats": stats, "items": items},
               f, default=str, separators=(",", ":"))
 print(stats)
+
+# Slim snapshot for rank history: just enough to compare rankings between dates.
+if args.history:
+    os.makedirs(args.history, exist_ok=True)
+    keep = ["rank", "lag", "dep", "old_line", "dep_latest", "impact", "affected", "sole"]
+    with open(f"{args.history}/{asof}.json", "w") as f:
+        json.dump({"as_of": asof, "approximate": bool(AS_OF), "items": [{k: i[k] for k in keep} for i in items]},
+                  f, separators=(",", ":"))
+    print(f"wrote snapshot {args.history}/{asof}.json")
 print(f"wrote {len(items)} items to {out}")
 for r in items[:25]:
     print(f"{r['impact']:>14,} {r['affected']:>6} {r['sole']:>6}  {r['lag']} -> {r['dep']} {r['req']} (latest {r['dep_latest']})")
