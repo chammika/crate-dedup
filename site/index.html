@@ -112,6 +112,12 @@
   .card ol { margin: 0; padding-left: 1.3rem; }
   .card li { padding: .15rem 0; }
   .card details summary { cursor: pointer; color: var(--rust); margin-top: .5rem; }
+  details.item.target { box-shadow: inset 3px 0 0 var(--rust); }
+  .notice { background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--rust);
+            border-radius: .6rem; padding: .8rem 1rem; margin: 0 0 1rem; }
+  .copy { font: inherit; font-size: .85rem; color: var(--rust); background: none; border: 1px solid var(--rust);
+          border-radius: .4rem; padding: .15rem .6rem; cursor: pointer; margin-top: .5rem; }
+  .copy:focus-visible { outline: 2px solid var(--rust); outline-offset: 1px; }
   @media (max-width: 720px) { .changes { grid-template-columns: 1fr; } }
   footer { margin-top: 2rem; color: var(--muted); font-size: .85rem; }
   @media (max-width: 720px) {
@@ -173,6 +179,7 @@ zerocopy-derive from zerocopy), shown as "via" in the row details.</p>
 
 <input type="search" id="q" placeholder="Filter by crate, dependency, or owner (e.g. syn, windows-sys)" aria-label="Filter">
 
+<p class="notice" id="notice" role="status" hidden></p>
 <div class="table">
 <div class="row head" role="row">
   <span></span><button data-k="rank" class="num">#</button><button data-k="lag">Crate to upgrade</button><button data-k="dep">Outdated dependency</button>
@@ -195,7 +202,7 @@ const fmt = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDi
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const crate = n => `<a href="https://crates.io/crates/${encodeURIComponent(n)}">${esc(n)}</a>`;
 const safeUrl = u => /^https?:\/\//.test(u ?? "") ? u : null;
-let items = [], sortKey = "rank", asc = true, maxImpact = 1, page = 0;
+let report = {}, items = [], sortKey = "rank", asc = true, maxImpact = 1, page = 0;
 
 let asOf = new Date(), hist = {};
 const approx = h => h.approximate ? " (rebuilt)" : "";
@@ -239,7 +246,7 @@ function render(it) {
   const co = it.co_blockers.map(c => `<li><span>${crate(c.name)}</span><span class="v">${fmt.format(c.shared)} trees</span>
     <i style="--w:${(100 * c.shared / topCo).toFixed(0)}%"></i></li>`).join("");
   const others = it.affected - it.sole, newLine = `${esc(it.dep)} ${esc(lineOf(it.dep_latest))}`;
-  return `<details class="item"><summary><span class="row">
+  return `<details class="item" data-key="${esc(it.lag + "/" + it.dep)}"><summary><span class="row">
     <span class="chev" aria-hidden="true">▶</span>
     <span class="num rank">${it.rank}</span>
     <span><span class="name">${esc(it.lag)}</span> <span class="muted">${esc(it.lag_version)}</span>${delta(it)}</span>
@@ -275,16 +282,21 @@ function render(it) {
       <dt>Crate</dt><dd>${esc(it.lag)} ${esc(it.lag_version)} · released <span class="nw">${esc(it.lag_last_release)}</span></dd>
       <dt>Owners</dt><dd>${it.owners?.map(esc).join(", ") || "unknown"}</dd>
       <dt>Links</dt><dd>${repo ? `<a href="${esc(repo)}">Repository</a> · ` : ""}<a href="https://crates.io/crates/${encodeURIComponent(it.lag)}">crates.io</a> ·
-        <a href="https://docs.rs/${encodeURIComponent(it.lag)}">docs.rs</a></dd>
+        <a href="https://docs.rs/${encodeURIComponent(it.lag)}">docs.rs</a><br>
+        <button class="copy" data-link="${esc(permalink(it))}" title="Link to this crate/dependency pair; it keeps working as the rank changes">Copy link</button></dd>
     </dl>
   </div></details>`;
 }
 
-function draw() {
+function view() {
   const q = document.getElementById("q").value.trim().toLowerCase();
-  const rows = items
+  return items
     .filter(it => !q || [it.lag, it.dep, ...(it.owners ?? [])].some(s => s?.toLowerCase().includes(q)))
     .sort((a, b) => (a[sortKey] < b[sortKey] ? -1 : a[sortKey] > b[sortKey] ? 1 : 0) * (asc ? 1 : -1));
+}
+
+function draw() {
+  const rows = view();
   const size = +document.getElementById("size").value, pages = Math.max(1, Math.ceil(rows.length / size));
   page = Math.min(page, pages - 1);
   document.getElementById("list").innerHTML =
@@ -293,6 +305,39 @@ function draw() {
   document.getElementById("prev").disabled = page === 0;
   document.getElementById("next").disabled = page >= pages - 1;
 }
+// Permalinks name the pair, not its rank: #<crate>/<dependency> (or #<crate> to filter by crate).
+const permalink = it => `${location.origin}${location.pathname}#${encodeURIComponent(it.lag)}/${encodeURIComponent(it.dep)}`;
+function openFromHash() {
+  const [lag, dep] = location.hash.slice(1).split("/").map(decodeURIComponent);
+  const notice = document.getElementById("notice"), q = document.getElementById("q");
+  notice.hidden = true;
+  if (!lag) return;
+  if (!dep) { q.value = lag; page = 0; draw(); return; }
+  q.value = ""; sortKey = "rank"; asc = true;
+  document.querySelectorAll(".head button").forEach(x => x.removeAttribute("aria-sort"));
+  const i = view().findIndex(it => it.lag === lag && it.dep === dep);
+  if (i < 0) {
+    const f = (report.fixed ?? []).find(f => f.lag === lag && f.dep === dep);
+    notice.innerHTML = f
+      ? `🎉 <b>${esc(lag)}</b> no longer holds ${esc(dep)} ${esc(f.old_line)}: fixed in ${esc(f.version)} (${esc(f.released)})${f.new_req ? `, now <code>${esc(f.new_req)}</code>` : ""}.
+         It was #${f.prev_rank} on ${esc(hist.d30.as_of)}. Thank you!`
+      : `<b>${esc(lag)} → ${esc(dep)}</b> isn't in today's ranking. It may have been upgraded, dropped below the top
+         ${items.length}, or be in the ${report.stats?.grace_days ?? 30}-day grace period.`;
+    notice.hidden = false; page = 0; draw(); notice.scrollIntoView({ block: "center" });
+    return;
+  }
+  page = Math.floor(i / +document.getElementById("size").value); draw();
+  const el = document.querySelector(`details.item[data-key="${CSS.escape(lag + "/" + dep)}"]`);
+  el.open = true; el.classList.add("target"); el.scrollIntoView({ block: "start" });
+}
+window.addEventListener("hashchange", openFromHash);
+document.getElementById("list").addEventListener("click", e => {
+  const b = e.target.closest(".copy");
+  if (!b) return;
+  navigator.clipboard.writeText(b.dataset.link).then(() => { b.textContent = "Copied ✓"; setTimeout(() => b.textContent = "Copy link", 1500); },
+    () => prompt("Copy this link:", b.dataset.link));
+});
+
 const go = p => { page = p; draw(); document.querySelector(".table").scrollIntoView({ block: "start" }); };
 document.getElementById("prev").addEventListener("click", () => go(page - 1));
 document.getElementById("next").addEventListener("click", () => go(page + 1));
@@ -344,13 +389,14 @@ document.querySelectorAll(".head button").forEach(b => b.addEventListener("click
 }));
 
 fetch("report.json", { cache: "no-cache" }).then(r => r.json()).then(d => {
-  items = d.items;
+  report = d; items = d.items;
   asOf = new Date(d.stats?.data_as_of ?? d.generated_at);
   hist = d.history ?? {};
   if (d.stats?.grace_days) document.getElementById("grace").textContent = d.stats.grace_days;
   maxImpact = Math.max(1, ...items.map(it => it.impact));
   draw();
   if (d.stats) summary(d);
+  openFromHash();
 }).catch(e => { document.getElementById("list").innerHTML = `<p class="warn">Failed to load report.json: ${esc(e)}</p>`; });
 </script>
 </body>
