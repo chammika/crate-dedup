@@ -4,6 +4,11 @@
 upgrades that would remove duplicate crates from the ecosystem, rebuilt daily from the crates.io dump.
 Expand any row to see which crates benefit, who else holds the old version, and who maintains it.
 
+**Linking to a crate** (e.g. from an upgrade PR): use `https://chammika.github.io/crate-dedup/#<crate>/<dependency>`,
+e.g. [`#zerocopy-derive/syn`](https://chammika.github.io/crate-dedup/#zerocopy-derive/syn). The link names the pair, not
+its rank, so it keeps working as the ranking moves. Each card has a **Copy link** button. After the upgrade ships, the
+same link shows a "fixed" note. `#<crate>` alone filters the list to that crate.
+
 Finds crates on crates.io whose outdated dependency forces the rest of the ecosystem to compile
 two copies of the same crate (e.g. `syn 2` and `syn 3`), and ranks them by how much one upgrade
 PR would help.
