@@ -51,7 +51,7 @@ same top-100 set as the live ranking, with a median rank difference of 1.
 ## Score
 
 ```math
-\operatorname{impact}(L \to D) \;=\; \sum_{R \,\in\, A(L,D)} \frac{d_{90}(R)}{k(R)}
+\text{impact}(L \to D) \;=\; \sum_{R \,\in\, A(L,D)} \frac{d_{90}(R)}{k(R)}
 ```
 
 - $`L`$: the crate to upgrade. $`D`$: the dependency it holds on an old line.
