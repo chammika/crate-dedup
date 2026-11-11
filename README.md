@@ -50,15 +50,18 @@ same top-100 set as the live ranking, with a median rank difference of 1.
 
 ## Score
 
-```
-impact(L → D) = Σ over affected crates R of  d90(R) / k(R)
+```math
+\operatorname{impact}(L \to D) \;=\; \sum_{R \,\in\, A(L,D)} \frac{d_{90}(R)}{k(R)}
 ```
 
-- `d90(R)`: downloads of `R` (all versions) in the last 90 days. This weights by current usage, so
+- $`L`$: the crate to upgrade. $`D`$: the dependency it holds on an old line.
+- $`A(L,D)`$: the affected crates. Every crate $`R`$ whose tree contains $`L`$ and also requires $`D`$'s
+  latest line, so $`R`$ compiles $`D`$ twice. **Affected** $`= |A(L,D)|`$.
+- $`d_{90}(R)`$: downloads of $`R`$ (all versions) in the last 90 days. This weights by current usage, so
   abandoned crates count for little.
-- `k(R)`: the number of laggard crates in `R`'s tree that hold `D` on the same old line. The
-  duplicate only goes away when all `k` upgrade, so the credit is split `k` ways. A **sole blocker**
-  (`k = 1`) gets `R`'s full weight.
+- $`k(R)`$: the number of laggard crates in $`R`$'s tree that hold $`D`$ on the same old line. The
+  duplicate only goes away when all $`k`$ upgrade, so the credit is split $`k`$ ways. A **sole blocker**
+  ($`k(R) = 1`$) gets $`R`$'s full weight: **Sole** $`= |\{R \in A(L,D) : k(R) = 1\}|`$.
 
 In plain terms: impact is the download traffic that would stop compiling an extra copy of `D` if
 `L` upgraded, with credit shared among co-blockers.
